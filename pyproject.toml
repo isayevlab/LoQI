@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "megalodon"
+readme = "README.md"
+description = "Megalodon: Applications of Modular Co-Design for De Novo 3D Molecule Generation"
+authors = [{ name = "NVIDIA", email = "bionemofeedback@nvidia.com" }]
+requires-python = ">=3.10"
+license = { file = "LICENSE/license_code.txt" }
+dynamic = ["version"]
+dependencies = [
+    # external
+    'torch==2.7.0',
+    'torch_geometric==2.6.1',
+    'torch-sparse==0.6.18',
+    'torch-scatter==2.1.2',
+    'torch-cluster==1.6.3',
+    'torch_spline_conv==1.2.2',
+    'hydra-core==1.3.2',
+    'rdkit==2025.3.2',
+    'lightning==2.5.1.post0',
+    'einops==0.8.1',
+    'wandb==0.19.11',
+    'pandas==2.2.3',
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["*"]
+namespaces = true
+
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }

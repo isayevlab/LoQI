@@ -1,0 +1,18 @@
+.idea
+/scripts/results/
+/results/
+/resutls/
+/.vscode/
+/data/
+/sdfs/
+outputs/
+
+
+# Convert checkpoint scripts (keep local but don't track in git)
+scripts/convert_checkpoint.py
+scripts/convert_megaflow_checkpoint.py
+
+# Python cache files and directories
+__pycache__/
+*.py[cod]
+*$py.class
