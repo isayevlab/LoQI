@@ -685,3 +685,87 @@ class MegaFNV3(nn.Module):
             "edge_attr_logits": e_logits,
         }
         return out
+
+
+class MegaFNV3Conf(nn.Module):
+    def __init__(
+            self,
+            num_layers=8,
+            equivariant_node_feature_dim=3,
+            invariant_node_feat_dim=256,
+            invariant_edge_feat_dim=256,
+            atom_classes=16,
+            edge_classes=5,
+            num_heads=16,
+            n_vector_features=128,
+            scale_dist_features=4,
+            dist_size=4,
+            prune_edges=False,
+            return_features=False,
+    ):
+        super(MegaFNV3Conf, self).__init__()
+        self.scale_dist_features = scale_dist_features
+        self.atom_embedder = MLP(atom_classes, invariant_node_feat_dim, invariant_node_feat_dim)
+        self.edge_embedder = MLP(edge_classes, invariant_edge_feat_dim, invariant_edge_feat_dim)
+        self.num_atom_classes = atom_classes
+        self.num_edge_classes = edge_classes
+        self.n_vector_features = n_vector_features
+        self.coord_emb = nn.Linear(1, n_vector_features, bias=False)
+        self.coord_pred = nn.Linear(n_vector_features, 1, bias=False)
+        self.node_time_embedding = TimestepEmbedder(invariant_node_feat_dim)
+        self.edge_time_embedding = TimestepEmbedder(invariant_edge_feat_dim)
+        self.dit_layers = nn.ModuleList()
+        self.egnn_layers = nn.ModuleList()
+        for i in range(num_layers):
+            self.dit_layers.append(
+                DiTeBlock(
+                    invariant_node_feat_dim,
+                    invariant_edge_feat_dim,
+                    num_heads,
+                    use_z=False,
+                    dist_size=scale_dist_features * dist_size,
+                    n_vector_features=n_vector_features,
+                )
+            )
+            self.egnn_layers.append(
+                XEGNNK(
+                    invariant_node_feat_dim,
+                    invariant_edge_feat_dim,
+                    n_vector_features=n_vector_features,
+                    dist_size=dist_size,
+                    prune_edges=prune_edges,
+                )
+            )
+
+        self.dist_projection = nn.Linear(n_vector_features, dist_size, bias=False)
+        self.return_features = return_features
+
+    def forward(self, batch, X, H, E_idx, E, t):
+        torch.max(batch) + 1
+        pos = self.coord_emb(X.unsqueeze(-1))  # N x 3 x K
+
+        H = self.atom_embedder(H)
+        E = self.edge_embedder(E)  # should be + n_vector_features not + 1
+        edge_batch = batch[E_idx[0]]
+        te_h = self.node_time_embedding(t)
+        te_e = self.edge_time_embedding(t)
+        # te_h = te[batch]
+        # te_e = te[batch[E_idx[0]]]
+        edge_attr = E
+
+        for layer_index in range(len(self.dit_layers)):
+            proj_pos = self.dist_projection(pos)
+            distances = coord2distfn(proj_pos, E_idx, self.scale_dist_features, batch)  # E x K
+            # import ipdb; ipdb.set_trace()
+            H, edge_attr = self.dit_layers[layer_index](batch, H, te_h, edge_attr, E_idx, te_e,
+                                                        distances, edge_batch)
+            pos = self.egnn_layers[layer_index](batch, pos, H, E_idx, edge_attr, te_e)
+
+        X = self.coord_pred(pos).squeeze(-1)
+        x = X - scatter_mean(X, index=batch, dim=0)[batch]
+
+        out = {
+            "x_hat": x, 
+            "H": H
+        }
+        return out

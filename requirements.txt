@@ -5,6 +5,7 @@ lightning==2.5.1.post0
 einops==0.8.1
 wandb==0.19.11
 pandas==2.2.3
+tqdm==4.67.1
 
 # PyTorch with CUDA support - upgraded to 2.7.0 for security compliance
 torch==2.7.0

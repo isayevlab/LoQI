@@ -1,0 +1,193 @@
+run_name: 'megalodon_quick_diffusion_qm9'
+outdir: /home/fnikitin/Megalodon/results
+resume: null
+ema: True
+wandb_params:
+  mode: 'disabled'  # disabled, offline, online
+  group: 'qm9'
+  project: 'Megalodon'
+
+data:
+  dataset_root: "/home/fnikitin/Megalodon/data/qm9"
+  processed_folder: "processed"
+  batch_size: &batch_size 128
+  inference_batch_size: 128
+  removed_h: False
+  data_loader_type: "standard"
+  aug_rotations: False
+  scale_coords: &scale_coords 1.0
+
+loss:
+  # Loss clamp configuration (specific to megalodon models)
+  use_loss_clamps: True
+  loss_clamp_epoch_threshold: 10
+  loss_clamps:
+    x: 1.0
+    edge_attr: 0.1
+    h: 1.0
+    charges: 0.1
+  variables:
+    - variable_name: 'x'
+      loss_scale: 3.0
+      aggregate: 'mean'
+      continuous: True
+      use_distance: null
+      distance_scale: null
+    - variable_name: 'h'
+      loss_scale: 1.0
+      aggregate: 'mean'
+      continuous: False
+    - variable_name: 'edge_attr'
+      loss_scale: 2.0
+      aggregate: 'mean'
+      continuous: False
+    - variable_name: 'charges'
+      loss_scale: 1.0
+      aggregate: 'mean'
+      continuous: False
+
+interpolant:
+  timesteps: &timesteps 500
+  time_type: &time_type "discrete" #["discrete, "continuous]
+  scheduler_type: &scheduler_type "cosine_adaptive" #["cosine_adaptive, "linear"]
+  sample_time_method: "uniform" # ["symmetric", "uniform", "stab_mode", "logit_normal", "beta"]
+  sample_time_mean: 0 # Used in stab_mode and logit_normal
+  sample_time_scale: 0.81 # Used in stab_mode and logit_normal
+  global_variable_name: 'h' # variable that is specficed below to be used for sampling time and loss sampling
+  min_t: &min_t 0
+  variables:
+    - variable_name: 'x'
+      interpolant_type: 'continuous_diffusion'
+      diffusion_type: 'vdm'
+      prior_type: 'gaussian'
+      timesteps: *timesteps
+      num_classes: 3
+      scheduler_type: *scheduler_type
+      scheduler_cut: False
+      time_type: *time_type
+      nu: 2.5
+      com_free: True
+    - variable_name: 'h'
+      interpolant_type: 'discrete_diffusion'
+      prior_type: 'custom'
+      custom_prior: '${data.dataset_root}/processed/train_atom_types_h.npy'
+      timesteps: *timesteps
+      num_classes: &num_atoms 17
+      scheduler_type: *scheduler_type
+      scheduler_cut: False
+      time_type: *time_type
+      nu: 1.0
+    - variable_name: 'edge_attr'
+      interpolant_type: 'discrete_diffusion'
+      prior_type: 'custom'
+      custom_prior: '${data.dataset_root}/processed/train_bond_types_h.npy'
+      timesteps: *timesteps
+      num_classes: 5
+      scheduler_type: *scheduler_type
+      scheduler_cut: False
+      time_type: *time_type
+      nu: 1.5
+    - variable_name: 'charges'
+      interpolant_type: 'discrete_diffusion'
+      prior_type: 'custom'
+      custom_prior: '${data.dataset_root}/processed/train_charges_prior_h.npy'
+      timesteps: *timesteps
+      scheduler_type: *scheduler_type
+      scheduler_cut: False
+      time_type: *time_type
+      nu: 1.0
+      # interpolant_type: null
+      concat: 'h'
+      num_classes: 6
+      offset: 2
+
+
+dynamics:
+  model_name: "megav3"
+  model_args:
+    atom_classes: 23
+    edge_classes: 5
+    invariant_edge_feat_dim: 64
+    invariant_node_feat_dim: 256
+    n_vector_features: 64
+    equivariant_node_feature_dim: 3
+    num_layers: 10
+    num_heads: 4
+    dist_size: 16
+    prune_edges: False
+  wrapper_args:
+    timesteps: *timesteps
+    time_type: *time_type
+
+self_conditioning:
+  name: "base"
+  variables:
+    - variable_name: h
+      hidden_dims: 64
+      fuse_softmax: True
+      vector: False
+      clamp_min: null
+      clamp_max: null
+    - variable_name: charges
+      hidden_dims: 64
+      fuse_softmax: True
+      vector: False
+      clamp_min: null
+      clamp_max: null
+
+    - variable_name: edge_attr
+      hidden_dims: 64
+      fuse_softmax: True
+      vector: False
+      clamp_min: null
+      clamp_max: null
+
+    - variable_name: x
+      hidden_dims: 32
+      fuse_softmax: False
+      vector: True
+      clamp_min: -100
+      clamp_max: 100
+
+sample:
+  node_distribution: "${data.dataset_root}/processed/train_n_h.pickle" # null
+
+train:
+  seed: 42
+  gpus: 1
+  n_epochs: 300
+  enable_progress_bar: True
+  gradient_clip_value: 1.0
+  log_freq: 50
+  val_freq: 5
+  checkpoint_monitor: mol_stable
+  checkpoint_monitor_mode: max
+  checkpoint_every_n_train_steps: 500
+
+evaluation:
+  type: molecules
+  batch_size: 200
+  n_molecules: 400
+  scale_coords: *scale_coords
+  timesteps: *timesteps
+  compute_2D_metrics: True
+  compute_3D_metrics: True
+  compute_train_data_metrics: True
+  compute_energy_metrics: False
+  energy_metrics_args: null
+  preserve_aromatic: False 
+
+
+optimizer:
+  type: adamw
+  lr: 1.e-4
+  weight_decay: 1.e-12
+  amsgrad: True
+
+lr_scheduler:
+  type: linear_warmup
+  initial_lr: 1.e-5
+  final_lr: 1.e-4
+  num_warmup_steps: 1000
+  interval: step
+  frequency: 1

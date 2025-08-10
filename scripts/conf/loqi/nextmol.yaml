@@ -1,0 +1,139 @@
+run_name: 'nextmol_stereo'
+outdir: null
+resume: null
+ema: True
+wandb_params:
+  mode: 'online'  # disabled, offline, online
+  group: 'conformers'
+  project: 'chembl3d_megalodon_diffusion'
+
+data:
+  dataset_root: "/home/fnikitin/chembl3d_classic_stereo"
+  processed_folder: "processed"
+  batch_size: &batch_size 150
+  inference_batch_size: 150
+  removed_h: False
+  data_loader_type: "midi"
+  aug_rotations: True
+  scale_coords: &scale_coords 4.0072
+
+loss:
+  variables:
+    - variable_name: 'x'
+      loss_scale: 3.0
+      aggregate: 'mean'
+      continuous: True
+      use_distance: null
+      distance_scale: null
+
+interpolant:
+  timesteps: &timesteps 100
+  time_type: &time_type "discrete" #["discrete, "continuous]
+  scheduler_type: &scheduler_type "cosine_adaptive" #["cosine_adaptive, "linear"]
+  sample_time_method: "uniform" # ["symmetric", "uniform", "stab_mode", "logit_normal", "beta"]
+  sample_time_mean: 0 # Used in stab_mode and logit_normal
+  sample_time_scale: 0.81 # Used in stab_mode and logit_normal
+  global_variable_name: 'x' # variable that is specficed below to be used for sampling time and loss sampling
+  min_t: &min_t 0
+  variables:
+    - variable_name: 'x'
+      interpolant_type: 'continuous_diffusion' #["continuous_diffusion", "continuous_flow_matching"]
+      diffusion_type: 'vdm'
+      prior_type: 'gaussian'
+      timesteps: *timesteps
+      num_classes: 3
+      scheduler_type: *scheduler_type
+      scheduler_cut: False
+      time_type: *time_type
+      nu: 1.
+      com_free: True
+      min_t: *min_t
+    - variable_name: 'h'
+      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      num_classes: &num_atoms 17
+      prior_type: null
+    - variable_name: 'edge_attr'
+      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      num_classes: 9
+      prior_type: null
+    - variable_name: 'charges'
+      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      concat: 'h'
+      num_classes: 6
+      offset: 2
+      prior_type: null
+
+dynamics:
+  model_name: "nextmolconf"
+  model_args:
+    in_node_features: 23
+    in_edge_features: 9
+    hidden_size: 512
+    n_blocks: 10
+    n_heads: 8
+    dropout: 0.1
+    use_original_dgt: False
+    mlp_ratio: 4
+    disable_com: True
+    disable_extra_gelu: False
+    not_pair_update: False
+    fuse_qkv: False
+
+  wrapper_args:
+    timesteps: *timesteps
+    time_type: *time_type
+
+self_conditioning:
+  name: "base"
+  variables:
+    - variable_name: x
+      hidden_dims: 32
+      fuse_softmax: False
+      vector: True
+      clamp_min: -100
+      clamp_max: 100
+
+sample:
+  node_distribution: "${data.dataset_root}/processed/train_n_h.pickle" # null
+
+train:
+  seed: 42
+  gpus: 1
+  n_epochs: 800
+  enable_progress_bar: True
+  gradient_clip_value: 1.0
+  log_freq: 50
+  val_freq: 5
+  checkpoint_monitor: opt_median_relative_energy
+  checkpoint_monitor_mode: min
+  checkpoint_every_n_train_steps: 500
+
+evaluation:
+  type: conformers
+  max_molecules: 300
+  timesteps: *timesteps
+  compute_3D_metrics: True
+  compute_energy_metrics: True
+  compute_stereo_metrics: True
+  scale_coords: *scale_coords
+  energy_metrics_args:
+    model_path: /home/fnikitin/Mega_ChMBL3D/mega_framework/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt
+    batchsize: 100
+    opt_metrics: True
+    opt_params:
+      fmax: 2e-3
+      max_nstep: 3000
+
+optimizer:
+  type: adamw
+  lr: 1.e-4
+  weight_decay: 1.e-12
+  amsgrad: True
+
+lr_scheduler:
+  type: linear_warmup
+  initial_lr: 1.e-5
+  final_lr: 1.e-4
+  num_warmup_steps: 1000
+  interval: step
+  frequency: 1 #not in config but this is the default

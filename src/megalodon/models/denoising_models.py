@@ -21,13 +21,14 @@ from torch_scatter import scatter_add
 from torch_geometric.data import Data
 
 from megalodon.dynamics.eqgat.eqgat_wrapper import EQGATWrapper
-from megalodon.dynamics.fn_model import MegaFNV3
+from megalodon.dynamics.fn_model import MegaFNV3, MegaFNV3Conf
 from megalodon.dynamics.mega_large import MegalodonDotFN
 from megalodon.dynamics.megaflow_semla_ckpt.mimic_semla_wrapper import MimicSemlaWrapper
 from megalodon.dynamics.megaflow_semla_ckpt.original_semla_ckpt import \
     MimicOriginalSemlaWrapper
 from megalodon.dynamics.megaflow_semla_ckpt.semla_wrapper import SemlaWrapper
 from megalodon.dynamics.jodo import DGT_concat
+from megalodon.dynamics.nextmol import DGTDiffusion
 
 
 class ModelBuilder:
@@ -36,12 +37,16 @@ class ModelBuilder:
     def __init__(self):
         """Initializes the ModelBuilder with a dictionary of available model classes."""
         self.model_classes = {"megav3": MegaFNV3Wrapper, 
+                              "megav3conf": MegaFNV3ConfWrapper,
                               "mimic_semla": MimicSemlaWrapper, 
                               "mega_large": MegaLargeWrapper,
                               "original_semla": MimicOriginalSemlaWrapper,
                               "semla": SemlaWrapper, 
                               "eqgat": EQGATWrapper,
-                              "jodo": JODOWrapper}
+                              "jodo": JODOWrapper,
+                              "nextmolconf": NextMolConfWrapper,
+
+                              }
 
     def create_model(self, model_name: str, args_dict: dict, wrapper_args: dict):
         """
@@ -193,6 +198,111 @@ class MegaLargeWrapper(MegalodonDotFN):
             t=time,
         )
         return out
+    
+
+class MegaFNV3ConfWrapper(MegaFNV3Conf):
+    """A wrapper class for the MoCo model."""
+
+    def __init__(self, args_dict, time_type="continuous", timesteps=None):
+        """
+        Initializes the DiTWrapper.
+
+        Args:
+            args_dict (dict): A dictionary of arguments for initializing the MoCo model.
+        """
+        self.args = args_dict
+        self.time_type = time_type
+        self.timesteps = timesteps
+        super().__init__(**args_dict)
+
+    def forward(self, batch, time, conditional_batch=None, timesteps=None, return_features=False):
+        """
+        Forward pass of the MoCo model.
+
+        Args:
+            batch (torch_geometric.data.Batch): The input batch.
+            time (Tensor): The time tensor.
+            conditional_batch: Optional conditional batch for self-conditioning.
+            timesteps: Number of timesteps.
+            return_features: Whether to return intermediate features.
+
+        Returns:
+            dict: The output of the MoCo model.
+        """
+        timesteps = timesteps if timesteps is not None else self.timesteps
+        if self.time_type == "discrete" and timesteps is not None:
+            time = (timesteps - time.float()) / timesteps
+        
+        # Set the return_features flag on the underlying model
+        self.return_features = return_features
+        
+        out = super().forward(
+            batch=batch["batch"],
+            X=batch["x_t"],
+            H=batch["h_t"],
+            E=batch["edge_attr_t"],
+            E_idx=batch["edge_index"],
+            t=time,
+        )
+        out["h_logits"] = batch["h_t"]
+        out["edge_attr_logits"] = batch["edge_attr_t"]
+        return out
+    
+
+class NextMolConfWrapper(DGTDiffusion):
+    def __init__(self, args_dict, time_type="continuous", timesteps=None):
+        """
+        Initialize the NextMolConformer model.
+
+        Args:
+            args_dict (dict): Arguments for initializing the DGTDiffusion model.
+            time_type (str, optional): Type of time ('continuous' or 'discrete'). Defaults to "continuous".
+            timesteps (int, optional): Number of timesteps for discrete time. Defaults to None.
+        """
+        self.args = args_dict
+        self.time_type = time_type
+        self.timesteps = timesteps
+        super().__init__(**args_dict)
+
+    def forward(self, batch, time, conditional_batch=None, timesteps=None):
+        """
+        Perform a forward pass of the NextMolConformer model.
+
+        Args:
+            batch (torch_geometric.data.Batch): Input batch containing node and edge features.
+            time (torch.Tensor): Time tensor for diffusion process.
+            conditional_batch (optional): Placeholder for conditional data. Defaults to None.
+            timesteps (int, optional): Number of timesteps for discrete time. Defaults to None.
+
+        Returns:
+            dict: Model outputs including updated positions and logits for node and edge attributes.
+        """
+        # Use the provided timesteps or fall back to the instance attribute
+        timesteps = timesteps if timesteps is not None else self.timesteps
+
+        # Convert time for discrete diffusion
+        if self.time_type == "discrete" and timesteps is not None:
+            time = (timesteps - time.float()) / timesteps
+
+        # Construct the data object for the diffusion model
+        data = Data(
+            x=batch["h_t"],
+            pos=batch["x_t"],
+            edge_index=batch["edge_index"],
+            edge_attr=batch["edge_attr_t"],
+            t_cond=time[batch["batch"]],
+            batch=batch["batch"]
+        )
+
+        # Forward pass through the diffusion model
+        pos = super().forward(data)
+
+        # Prepare the output dictionary
+        return {
+            "x_hat": pos,  # Updated positions
+            "h_logits": batch["h_t"],  # Node attribute logits
+            "edge_attr_logits": batch["edge_attr_t"]  # Edge attribute logits
+        }
 
 
 class JODOWrapper(DGT_concat):

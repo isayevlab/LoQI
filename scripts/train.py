@@ -28,10 +28,11 @@ from megalodon.data.batch_preprocessor import BatchPreProcessor
 from megalodon.data.molecule_datamodule import MoleculeDataModule
 from megalodon.data.statistics import Statistics
 from megalodon.metrics.molecule_evaluation_callback import MoleculeEvaluationCallback
+from megalodon.metrics.conformer_evaluation_callback import ConformerEvaluationCallback
 from megalodon.models.module import Graph3DInterpolantModel
 
 
-@hydra.main(version_base=None, config_path="conf/qm9", config_name=None)
+@hydra.main(version_base=None, config_path="conf/loqi", config_name=None)
 def main(cfg: DictConfig) -> None:
     """
     This is the main function conducting data loading and model training.
@@ -126,6 +127,23 @@ def main(cfg: DictConfig) -> None:
             energy_metrics_args=energy_metrics_args,
             scale_coords=cfg.evaluation.scale_coords,
             preserve_aromatic=OmegaConf.select(cfg.evaluation, "preserve_aromatic", default=True)
+        )
+
+    elif cfg.evaluation.type == "conformers":
+        energy_metrics_args = OmegaConf.to_container(cfg.evaluation.energy_metrics_args,
+                                                 resolve=True) if cfg.evaluation.energy_metrics_args is not None else None
+        statistics = Statistics.load_statistics(
+            statistics_dir=f"{cfg.data.dataset_root}/{cfg.data.processed_folder}",
+            split_name="train")
+        evaluation_callback = ConformerEvaluationCallback(
+            statistics=statistics,
+            max_molecules=cfg.evaluation.max_molecules,
+            timesteps=cfg.evaluation.timesteps,
+            compute_3D_metrics=cfg.evaluation.compute_3D_metrics,
+            compute_energy_metrics=cfg.evaluation.compute_energy_metrics,
+            energy_metrics_args=energy_metrics_args,
+            scale_coords=cfg.evaluation.scale_coords,
+            compute_stereo_metrics=cfg.evaluation.compute_stereo_metrics
         )
     else: 
         raise NotImplementedError

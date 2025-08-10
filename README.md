@@ -1,20 +1,28 @@
-# Megalodon: Applications of Modular Co-Design for De Novo 3D Molecule Generation
+# LoQI: Scalable Low-Energy Molecular Conformer Generation with Quantum Mechanical Accuracy
 
 <div align="center">
-  <a href="https://dreidenbach.github.io/" target="_blank">Danny&nbsp;Reidenbach<sup>*</sup></a> &emsp; <b>&middot;</b> &emsp;
-  <a href="https://scholar.google.com/citations?user=DOljaG8AAAAJ&hl=en" target="_blank">Filipp&nbsp;Nikitin<sup>*†</sup></a> &emsp; <b>&middot;</b> &emsp;
-  <a href="https://olexandrisayev.com/" target="_blank">Olexandr&nbsp;Isayev</a> &emsp; <b>&middot;</b> &emsp;
-  <a href="https://scholar.google.ch/citations?user=8S0VfjoAAAAJ&hl=en" target="_blank">Saee&nbsp;Paliwal</a>
+  <a href="https://scholar.google.com/citations?user=DOljaG8AAAAJ&hl=en" target="_blank">Filipp&nbsp;Nikitin<sup>1,2</sup></a> &emsp; <b>&middot;</b> &emsp;
+  <a href="#" target="_blank">Dylan&nbsp;M.&nbsp;Anstine<sup>2,3</sup></a> &emsp; <b>&middot;</b> &emsp;
+  <a href="#" target="_blank">Roman&nbsp;Zubatyuk<sup>2,5</sup></a> &emsp; <b>&middot;</b> &emsp;
+  <a href="https://scholar.google.ch/citations?user=8S0VfjoAAAAJ&hl=en" target="_blank">Saee&nbsp;Gopal&nbsp;Paliwal<sup>5</sup></a> &emsp; <b>&middot;</b> &emsp;
+  <a href="https://olexandrisayev.com/" target="_blank">Olexandr&nbsp;Isayev<sup>1,2,4*</sup></a>
   <br>
-  <sup>*</sup>NVIDIA &emsp; <b>&middot;</b> &emsp; Department of Computational Biology, Carnegie Mellon University
+  <sup>1</sup>Ray and Stephanie Lane Computational Biology Department, Carnegie Mellon University, Pittsburgh, PA, USA
   <br>
-  Department of Chemistry, Carnegie Mellon University
+  <sup>2</sup>Department of Chemistry, Carnegie Mellon University, Pittsburgh, PA, USA
+  <br>
+  <sup>3</sup>Department of Chemical Engineering and Materials Science, Michigan State University, East Lansing, MI, USA
+  <br>
+  <sup>4</sup>Department of Materials Science and Engineering, Carnegie Mellon University, Pittsburgh, PA, USA
+  <br>
+  <sup>5</sup>NVIDIA, Santa Clara, CA, USA
   <br><br>
-  <a href="https://arxiv.org/pdf/2505.18392" target="_blank">📄&nbsp;Paper</a> &emsp; <b>&middot;</b> &emsp;
+  <a href="#" target="_blank">📄&nbsp;Paper</a> &emsp; <b>&middot;</b> &emsp;
   <a href="#citation">📖&nbsp;Citation</a> &emsp; <b>&middot;</b> &emsp;
-  <a href="#setup">⚙️&nbsp;Setup</a>
+  <a href="#setup">⚙️&nbsp;Setup</a> &emsp; <b>&middot;</b> &emsp;
+  <a href="https://github.com/isayevlab/LoQI" target="_blank">🔗&nbsp;GitHub</a>
   <br><br>
-  <span><sup>*</sup>Equal contributions</span> &emsp; <span><sup>†</sup>Work performed during internship at NVIDIA</span>
+  <span><sup>*</sup>Corresponding author: olexandr@olexandrisayev.com</span>
 </div>
 
 ---
@@ -22,14 +30,26 @@
 ## Overview
 
 <div align="center">
-    <img width="700" alt="Megalodon Architecture" src="assets/arch.svg"/>
+    <img width="700" alt="Macrocycles" src="assets/macrocycles.svg"/>
 </div>
 
 ### Abstract
 
-De novo 3D molecule generation is a pivotal task in drug discovery. However, many recent geometric generative models struggle to produce high-quality 3D structures, even if they maintain 2D validity and topological stability. To tackle this issue and enhance the learning of effective molecular generation dynamics, we present **Megalodon**—a family of scalable transformer models. These models are enhanced with basic equivariant layers and trained using a joint continuous and discrete denoising co-design objective. 
+Molecular geometry is crucial for biological activity and chemical reactivity; however, computational methods for generating 3D structures are limited by the vast scale of conformational space and the complexities of stereochemistry. Here we present an approach that combines an expansive dataset of molecular conformers with generative diffusion models to address this problem. We introduce **ChEMBL3D**, which contains over 250 million molecular geometries for 1.8 million drug-like compounds, optimized using AIMNet2 neural network potentials to a near-quantum mechanical accuracy with implicit solvent effects included. This dataset captures complex organic molecules in various protonation states and stereochemical configurations. 
 
-We assess Megalodon's performance on established molecule generation benchmarks and introduce new 3D structure benchmarks that evaluate a model's capability to generate realistic molecular structures, particularly focusing on energetics. We show that Megalodon achieves state-of-the-art results in 3D molecule generation, conditional structure generation, and structure energy benchmarks using diffusion and flow matching. Furthermore, doubling the number of parameters in Megalodon to 40M significantly enhances its performance, generating up to 49x more valid large molecules and achieving energy levels that are 2-10x lower than those of the best prior generative models.
+We then developed **LoQI** (Low-energy QM Informed conformer generative model), a stereochemistry-aware diffusion model that learns molecular geometry distributions directly from this data. Through graph augmentation, LoQI accurately generates molecular structures with targeted stereochemistry, representing a significant advance in modeling capabilities over previous generative methods. The model outperforms traditional approaches, achieving up to tenfold improvement in energy accuracy and effective recovery of optimal conformations. Benchmark tests on complex systems, including macrocycles and flexible molecules, as well as validation with crystal structures, show LoQI can perform low energy conformer search efficiently.
+
+> **Note on Implementation**: LoQI is built upon the [Megalodon architecture](https://arxiv.org/pdf/2505.18392) developed, adapting it specifically for stereochemistry-aware conformer generation with the ChEMBL3D dataset.
+
+---
+
+## Key Features
+
+- **ChEMBL3D Dataset**: 250+ million AIMNet2-optimized conformers for 1.8M drug-like molecules
+- **Stereochemistry-Aware**: First all-atom diffusion model with explicit stereochemical encoding
+- **Quantum Mechanical Accuracy**: Near-DFT accuracy with implicit solvent effects
+- **Superior Performance**: Up to 10x improvement in energy accuracy over traditional methods
+- **Complex Molecule Support**: Handles macrocycles, flexible molecules, and challenging stereochemistry
 
 ---
 
@@ -45,12 +65,12 @@ We assess Megalodon's performance on established molecule generation benchmarks 
 
 ```bash
 # Clone the repository
-git clone [repository-url]
-cd megalodon
+git clone https://github.com/isayevlab/LoQI.git
+cd LoQI
 
 # Create and activate conda environment
-conda create -n megalodon python=3.10 -y
-conda activate megalodon
+conda create -n loqi python=3.10 -y
+conda activate loqi
 
 # Install dependencies
 pip install -e .
@@ -59,93 +79,97 @@ pip install -r requirements.txt
 
 ### Data Setup
 
-The training and evaluation require the **GEOM-Drugs** and **QM9** datasets. 
+The training and evaluation require the **ChEMBL3D** dataset. 
 
-For data downloading and preprocessing instructions, please refer to the `data_processing` directory.
+**Available with this release:**
+- Pre-trained LoQI model checkpoint (`data/loqi.ckpt`) - [Download Here](link-to-be-added)
+- Processed ChEMBL3D lowest-energy conformers dataset - [Download Here](link-to-be-added)
+
+**Coming soon:**
+- Full ChEMBL3D dataset (250M+ conformers) will be released in a separate repository
+- Complete dataset processing scripts and pipeline
+
+
 
 ---
 
 ## Usage
 
-Make sure that `src` content is available in your `PYTHONPATH` (e.g., `export PYTHONPATH="./src:$PYTHONPATH"`) if megalodon is not installed locally (pip install -e .). 
+Make sure that `src` content is available in your `PYTHONPATH` (e.g., `export PYTHONPATH="./src:$PYTHONPATH"`) if LoQI is not installed locally (pip install -e .). 
 
 ### Model Training
 
-**QM9 Dataset:**
 ```bash
-# Megalodon diffusion model
-python scripts/train.py --config-name=megalodon_diffusion train.gpus=2 data.dataset_root="./qm9_data"
+# LoQI conformer generation model
+python scripts/train.py --config-name=loqi outdir=./outputs train.gpus=1 data.dataset_root="./chembl3d_data"
 
-# Megalodon flow matching model  
-python scripts/train.py --config-name=megalodon_fm train.gpus=2 data.dataset_root="./qm9_data"
-
-# Quick diffusion model (reduced timesteps)
-python scripts/train.py --config-name=megalodon_quick_diffusion train.gpus=2 data.dataset_root="./qm9_data"
+# Customize training parameters
+python scripts/train.py --config-name=loqi \
+    outdir=./outputs \
+    train.gpus=2 \
+    train.n_epochs=800 \
+    train.seed=42 \
+    data.batch_size=150 \
+    optimizer.lr=0.0001
 ```
 
-**GEOM-Drugs Dataset:**
+### Model Inference and Sampling
+
+#### Conformer Generation
+
 ```bash
-# Megalodon diffusion model
-python scripts/train.py --config-path=scripts/conf/drugs --config-name=megalodon_diffusion train.gpus=2 data.dataset_root="./drugs_data"
+# Generate conformers for a single molecule
+python scripts/sample_conformers.py \
+    --config ./conf/loqi/loqi.yaml \
+    --ckpt ./data/loqi.ckpt \
+    --input "c1ccccc1" \
+    --output ./outputs/benzene_conformers.sdf \
+    --n_confs 10 \
+    --batch_size 1
 
-# Megalodon flow matching model
-python scripts/train.py --config-path=scripts/conf/drugs --config-name=megalodon_fm train.gpus=2 data.dataset_root="./drugs_data"
-
-# Quick diffusion model
-python scripts/train.py --config-path=scripts/conf/drugs --config-name=megalodon_quick_diffusion train.gpus=2 data.dataset_root="./drugs_data"
+# Generate conformers with evaluation
+python scripts/sample_conformers.py \
+    --config ./conf/loqi/loqi.yaml \
+    --ckpt ./data/loqi.ckpt \
+    --input "CCO" \
+    --output ./outputs/ethanol_conformers.sdf \
+    --n_confs 100 \
+    --batch_size 10
 ```
+
+#### Available Configurations
+
+**LoQI Models:**
+- `loqi.yaml` - LoQI stereochemistry-aware conformer generation model
+- `nextmol.yaml` - Alternative configuration for NextMol-style generation
 
 ### Training Configuration
 
 You can easily override configuration parameters:
 
 ```bash
-# Customize training parameters
-python scripts/train.py --config-name=megalodon_diffusion \
+# Example with custom parameters
+python scripts/train.py --config-name=loqi \
+    outdir=./my_training \
+    run_name=my_experiment \
     train.gpus=4 \
-    train.n_epochs=300 \
-    train.seed=42 \
+    train.n_epochs=500 \
     data.batch_size=64 \
-    optimizer.lr=0.0005
+    data.dataset_root="/path/to/chembl3d" \
+    wandb_params.mode=online
 ```
-
-### Model Inference and Sampling
-
-#### Available Model Configurations
-
-**QM9 Models:**
-- `megalodon_diffusion.yaml` - Megalodon with diffusion objective - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_qm9_large/files)
-- `megalodon_fm.yaml` - Megalodon with flow matching objective - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_qm9_fm/files)
-- `megalodon_quick_diffusion.yaml` - Megalodon with lighter architecture - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_qm9_quick/files)
-
-**GEOM-Drugs Models:**
-- `megalodon_diffusion.yaml` - Megalodon diffusion for drug-like molecules - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_drugs_large/files)
-- `megalodon_quick_diffusion.yaml` - Megalodon with lighter architecture - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_drugs_small/files)
-- `megalodon_fm.yaml` - Megalodon flow matching for drug-like molecules - [download weights](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/clara/resources/megalodon_drugs_fm/files)
-
-#### Sampling and Evaluation Commands
-Make sure that `data.dataset_root` leads to a processed dataset directory, as sampling and evaluation require some of the statistics from the data. 
-```bash
-# Generate molecules using trained model
-python scripts/sample.py --config_path scripts/conf/drugs/megalodon_diffusion.yaml --ckpt_path ckpts/drugs/megalodon_large_diffusion.ckpt --timesteps 500 --n_graphs 10
-```
-
-> **Note**: The MegalodonFlow model for GEOM-Drugs was originally trained in the Semla codebase and later transferred to this framework. A special configuration `megalodon_fm_inference` is provided specifically for the `drugs/megalodon_fm.ckpt` checkpoint to ensure compatibility.
-
-```bash
-# Example: Using the special inference config for transferred MegalodonFlow model
-python scripts/sample.py --config_path scripts/conf/drugs/megalodon_fm_inference.yaml --ckpt_path ckpts/drugs/megalodon_fm.ckpt --timesteps 100 --n_graphs 10
-```
-
-Upon completion of the sampling process, comprehensive evaluation metrics will be automatically calculated and displayed in the terminal output.
-
-For advanced energy evaluation using the **GFN2-xTB energy benchmark**, please refer to the dedicated evaluation repository [geom-drugs-3dgen-evaluation](https://github.com/isayevlab/geom-drugs-3dgen-evaluation).
 
 ---
 
 ## Citation
 
-If you use Megalodon in your research, please cite our paper:
+If you use LoQI in your research, please cite our paper:
+
+```bibtex
+Citation is coming. 
+```
+
+This work builds upon the Megalodon architecture. If you use the underlying architecture, please also cite:
 
 ```bibtex
 @article{reidenbach2025applications,
