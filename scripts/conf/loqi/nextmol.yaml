@@ -8,7 +8,7 @@ wandb_params:
   project: 'chembl3d_megalodon_diffusion'
 
 data:
-  dataset_root: "/home/fnikitin/chembl3d_classic_stereo"
+  dataset_root: "/home/fnikitin/LoQI/data/chembl3d_stereo"
   processed_folder: "processed"
   batch_size: &batch_size 150
   inference_batch_size: 150
