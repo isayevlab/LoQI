@@ -81,9 +81,9 @@ pip install -r requirements.txt
 
 The training and evaluation require the **ChEMBL3D** dataset. 
 
-**Available with this release:**
-- Pre-trained LoQI model checkpoint (`data/loqi.ckpt`) - [Download Here](link-to-be-added)
-- Processed ChEMBL3D lowest-energy conformers dataset - [Download Here](link-to-be-added)
+**Available with this release [Download Here](https://drive.google.com/drive/folders/1PvSrep7_qIjTSslzXD3KUYEJ2Qr2lgDD?usp=sharing):**
+- Pre-trained LoQI model checkpoint (`loqi.ckpt`)
+- Processed ChEMBL3D lowest-energy conformers dataset (`chembl3d_stereo`)
 
 **Coming soon:**
 - Full ChEMBL3D dataset (250M+ conformers) will be released in a separate repository
