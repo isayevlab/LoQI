@@ -251,7 +251,14 @@ def main():
             scale_coords=cfg.evaluation.scale_coords,
             compute_stereo_metrics=True
         )
-        results = eval_cb.evaluate_molecules(generated, references, model.device)
+        for gen, ref in zip(generated, references):
+            if ref.GetNumConformers() == 0:
+                ref.AddConformer(Chem.Conformer(ref.GetNumAtoms()))
+                conf = gen.GetConformer(0)
+                pos = conf.GetPositions()
+                conf.SetPositions(pos)
+                ref.AddConformer(conf)
+        results = eval_cb.evaluate_molecules(generated, reference_molecules=references, device=model.device)
         print("Evaluation Results:")
         print(results)
 

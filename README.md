@@ -137,6 +137,8 @@ python scripts/sample_conformers.py \
     --batch_size 10
 ```
 
+Note: Make sure you define correct paths for dataset and AimNet2 model in `loqi.yaml`. The relative path of AimNet2 model is `src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt`. 
+
 #### Available Configurations
 
 **LoQI Models:**

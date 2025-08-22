@@ -114,7 +114,7 @@ evaluation:
   compute_stereo_metrics: True
   scale_coords: *scale_coords
   energy_metrics_args:
-    model_path: /home/fnikitin/Mega_ChMBL3D/mega_framework/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt
+    model_path: /home/fnikitin/LoQI/src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt
     batchsize: 100
     opt_metrics: True
     opt_params:
