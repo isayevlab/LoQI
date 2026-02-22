@@ -126,7 +126,7 @@ class TimestepEmbedder(nn.Module):
     Embeds scalar timesteps into vector representations.
     """
 
-    def __init__(self, hidden_size, frequency_embedding_size=256):
+    def __init__(self, hidden_size, frequency_embedding_size=256, max_period=10000):
         super().__init__()
         self.mlp = nn.Sequential(
             nn.Linear(frequency_embedding_size, hidden_size, bias=True),
@@ -134,24 +134,20 @@ class TimestepEmbedder(nn.Module):
             nn.Linear(hidden_size, hidden_size, bias=True),
         )
         self.frequency_embedding_size = frequency_embedding_size
+        half = frequency_embedding_size // 2
+        freqs = torch.exp(
+            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half
+        )
+        self.register_buffer("freqs", freqs)
 
-    @staticmethod
-    def timestep_embedding(t, dim, max_period=10000):
+    def timestep_embedding(self, t, dim):
         """
-        Create sinusoidal timestep embeddings.
+        Create sinusoidal timestep embeddings using pre-registered frequency buffer.
         :param t: a 1-D Tensor of N indices, one per batch element.
-                          These may be fractional.
         :param dim: the dimension of the output.
-        :param max_period: controls the minimum frequency of the embeddings.
         :return: an (N, D) Tensor of positional embeddings.
         """
-        # https://github.com/openai/glide-text2im/blob/main/glide_text2im/nn.py
-        half = dim // 2
-        freqs = torch.exp(
-            -math.log(max_period) * torch.arange(start=0, end=half, dtype=torch.float32) / half).to(
-            device=t.device
-        )
-        args = t[:, None].float() * freqs[None]
+        args = t[:, None].float() * self.freqs[None]
         embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
         if dim % 2:
             embedding = torch.cat([embedding, torch.zeros_like(embedding[:, :1])], dim=-1)
@@ -438,7 +434,6 @@ class DiTeBlock(nn.Module):
             self.mask_z = mask_z
 
         self.lin_edge0 = nn.Linear(hidden_size, edge_hidden_size, bias=False)
-        self.lin_edge1 = nn.Linear(hidden_size, hidden_size, bias=False)
         self.lin_edge1 = nn.Linear(edge_hidden_size + dist_size, edge_hidden_size, bias=False)
         self.ffn_norm_edge = BatchLayerNorm(edge_hidden_size)
         self.ffn_edge = swiglu_ffn_edge(edge_hidden_size, bias=False)
@@ -463,6 +458,7 @@ class DiTeBlock(nn.Module):
             dist: torch.Tensor = None,
             edge_batch: torch.Tensor = None,
             Z: torch.Tensor = None,
+            precomputed_attn_mask: torch.Tensor = None,
     ):
         """
         This assume pytorch geometric batching so batch size of 1 so skip rotary as it depends on having an actual batch
@@ -515,15 +511,24 @@ class DiTeBlock(nn.Module):
         Q, K, V = map(reshaper, (Q, K, V))
 
         if x.dim() == 2:
-            attn_mask = batch.unsqueeze(0) == batch.unsqueeze(1)
-            attn_mask = attn_mask.unsqueeze(0).unsqueeze(
-                0
-            )  # ! if float it is added as the biasbut would still need a mask s -infs?
+            if precomputed_attn_mask is not None:
+                attn_mask = precomputed_attn_mask
+            else:
+                attn_mask = (batch.unsqueeze(0) == batch.unsqueeze(1)).unsqueeze(0).unsqueeze(0)
         else:
             attn_mask = batch
 
         if Z is not None:
             if x.dim() == 2:
+                # NOTE: This branch assumes attn_mask is a boolean tensor (True=attend,
+                # False=block) and converts it to a float additive bias via == 0 / == 1
+                # checks.  If the caller already passes a float additive bias (as
+                # module.py's sample() now does), those checks will not behave as
+                # intended: masked_fill(== 0) would zero-out valid positions and
+                # masked_fill(== 1) would be a no-op.  LoQI's config never sets Z
+                # (pair embeddings), so this branch is unreachable in practice, but
+                # it must be updated before pair embeddings are used with batched
+                # inference.
                 mask = torch.ones((x.size(0), x.size(0)))
                 if self.mask_z:
                     mask.fill_diagonal_(0)
@@ -644,7 +649,6 @@ class MegaFNV3(nn.Module):
         self.dist_projection = nn.Linear(n_vector_features, dist_size, bias=False)
 
     def forward(self, batch, X, H, E_idx, E, t):
-        torch.max(batch) + 1
         pos = self.coord_emb(X.unsqueeze(-1))  # N x 3 x K
 
         H = self.atom_embedder(H)
@@ -739,33 +743,50 @@ class MegaFNV3Conf(nn.Module):
 
         self.dist_projection = nn.Linear(n_vector_features, dist_size, bias=False)
         self.return_features = return_features
+        self._te_cache: dict = {}
 
-    def forward(self, batch, X, H, E_idx, E, t):
-        torch.max(batch) + 1
+    def clear_te_cache(self) -> None:
+        """Clear the timestep embedding cache. Call between inference runs if timesteps change."""
+        self._te_cache.clear()
+
+    def forward(self, batch, X, H, E_idx, E, t, precomputed_attn_mask=None):
         pos = self.coord_emb(X.unsqueeze(-1))  # N x 3 x K
 
         H = self.atom_embedder(H)
         E = self.edge_embedder(E)  # should be + n_vector_features not + 1
         edge_batch = batch[E_idx[0]]
-        te_h = self.node_time_embedding(t)
-        te_e = self.edge_time_embedding(t)
-        # te_h = te[batch]
-        # te_e = te[batch[E_idx[0]]]
+        # Cache is only safe when all molecules share the same timestep (inference path).
+        # During training, each molecule gets a different random t — fall back to full call.
+        if (t == t[0]).all():
+            t_key = t[0].item()
+            if t_key not in self._te_cache:
+                self._te_cache[t_key] = (
+                    self.node_time_embedding(t[:1]),   # shape [1, hidden_dim]
+                    self.edge_time_embedding(t[:1]),    # shape [1, edge_hidden_dim]
+                )
+            te_h_single, te_e_single = self._te_cache[t_key]
+            te_h = te_h_single.expand(t.shape[0], -1)
+            te_e = te_e_single.expand(t.shape[0], -1)
+        else:
+            te_h = self.node_time_embedding(t)
+            te_e = self.edge_time_embedding(t)
         edge_attr = E
 
         for layer_index in range(len(self.dit_layers)):
             proj_pos = self.dist_projection(pos)
             distances = coord2distfn(proj_pos, E_idx, self.scale_dist_features, batch)  # E x K
             # import ipdb; ipdb.set_trace()
-            H, edge_attr = self.dit_layers[layer_index](batch, H, te_h, edge_attr, E_idx, te_e,
-                                                        distances, edge_batch)
+            H, edge_attr = self.dit_layers[layer_index](
+                batch, H, te_h, edge_attr, E_idx, te_e, distances, edge_batch,
+                precomputed_attn_mask=precomputed_attn_mask,
+            )
             pos = self.egnn_layers[layer_index](batch, pos, H, E_idx, edge_attr, te_e)
 
         X = self.coord_pred(pos).squeeze(-1)
         x = X - scatter_mean(X, index=batch, dim=0)[batch]
 
         out = {
-            "x_hat": x, 
+            "x_hat": x,
             "H": H
         }
         return out

@@ -1,22 +1,16 @@
 import os
-import pickle
 from argparse import ArgumentParser
 from rdkit import Chem
 from rdkit.Chem import AllChem
-from tqdm import tqdm
 from torch_geometric.data import DataLoader
 import torch
 import numpy as np
 from omegaconf import OmegaConf
-from copy import deepcopy
+from copy import copy, deepcopy
 from torch_geometric.data import Data
 
 from megalodon.models.module import Graph3DInterpolantModel
 from megalodon.data.batch_preprocessor import BatchPreProcessor
-from megalodon.data.statistics import Statistics
-from megalodon.metrics.conformer_evaluation_callback import (
-    ConformerEvaluationCallback, write_coords_to_mol, convert_coords_to_np
-)
 
 from megalodon.metrics.molecule_evaluation_callback import full_atom_encoder
 
@@ -174,9 +168,10 @@ def mols_to_data_list(mols, n_confs=1, use_3d=True):
                     
         pos = mol.GetConformer().GetPositions() if use_3d and mol.GetNumConformers() > 0 else None
 
+        # Build topology once, then replicate cheaply
+        base_data = raw_to_pyg(Chem.Mol(mol), pos, use_3d=use_3d)
         for _ in range(n_confs):
-            data = raw_to_pyg(Chem.Mol(mol), pos, use_3d=use_3d)
-            data_list.append(data)
+            data_list.append(copy(base_data))
     return data_list
 
 
@@ -187,9 +182,9 @@ def main():
     parser.add_argument("--ckpt", type=str, required=True)
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--n_confs", type=int, default=1)
-    parser.add_argument("--batch_size", type=int, default=32)
-    parser.add_argument("--no_3d", action="store_true", help="Skip 3D embedding generation")
-    parser.add_argument("--skip_eval", action="store_true", help="Skip evaluation")
+    parser.add_argument("--batch_size", type=int, default=48)
+    parser.add_argument("--no_3d", action="store_true", help="Skip 3D embedding for SDF input preprocessing (does not affect diffusion-based coordinate generation)")
+    parser.add_argument("--skip_eval", action="store_true", help="(Ignored) Evaluation metrics are not computed by this script; kept for backward compatibility")
     args = parser.parse_args()
 
     # Load model
@@ -199,70 +194,57 @@ def main():
         loss_params=cfg.loss,
         interpolant_params=cfg.interpolant,
         sampling_params=cfg.sample,
-        batch_preporcessor=BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
+        batch_preprocessor=BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
     )
     model = model.to("cuda").eval()
 
-    # Load molecules and replicate them n_confs times
+    # Load molecules
     use_3d = not args.no_3d
     mols = load_rdkit_molecules(args.input, use_3d=use_3d)
-    data_list = mols_to_data_list(mols, n_confs=args.n_confs, use_3d=use_3d)
-    loader = DataLoader(data_list, batch_size=args.batch_size)
 
-    # Sampling
+    # Build SMILES list and preserve _Name property from SDF inputs.
+    # Chem.MolToSmiles() produces canonical SMILES, which becomes the key in
+    # ConformerGenerationResult.conformers. Map canonical SMILES back to the
+    # original mol name so pickle output stays compatible with the old format.
+    smiles_list = [Chem.MolToSmiles(m) for m in mols]
+    smiles_to_name = {
+        smi: (m.GetProp("_Name") if m.HasProp("_Name") else smi)
+        for smi, m in zip(smiles_list, mols)
+    }
+
+    # Sampling via inference API
+    from megalodon.inference import generate_conformers
+    result = generate_conformers(
+        smiles_list=smiles_list,
+        model=model,
+        cfg=cfg,
+        n_confs=args.n_confs,
+        batch_size=args.batch_size,
+    )
+
     generated = []
-    references = [] if not args.skip_eval else None
     ids = []
-    
-    for batch in tqdm(loader, desc="Sampling"):
-        batch = batch.to(model.device)
-        sample = model.sample(batch=batch, timesteps=cfg.interpolant.timesteps, pre_format=True)
-        coords_list = convert_coords_to_np(sample)
-        mols_gen = [write_coords_to_mol(mol, coords) for mol, coords in zip(batch["mol"], coords_list)]
-        generated.extend(mols_gen)
-        if not args.skip_eval:
-            references.extend(batch["mol"])
-        ids.extend([m.GetProp("_Name") if m.HasProp("_Name") else "NA" for m in batch["mol"]])
+    for smiles, conf_mols in result.conformers.items():
+        generated.extend(conf_mols)
+        name = smiles_to_name.get(smiles, smiles)
+        ids.extend([name] * len(conf_mols))
+
+    for err in result.errors:
+        print(f"WARNING: skipped SMILES at index {err.index}: {err.error}")
 
     # Save output
     if args.output.endswith(".sdf"):
-        from rdkit.Chem import SDWriter
-        writer = SDWriter(args.output)
-        for mol in generated:
-            writer.write(mol)
-        writer.close()
+        with open(args.output, "w") as f:
+            f.write(result.to_sdf())
     else:
+        import pickle
         output_dict = {"generated": generated, "ids": ids}
-        if references is not None:
-            output_dict["reference"] = references
         with open(args.output, "wb") as f:
             pickle.dump(output_dict, f)
 
-    # Evaluate only if references are available and evaluation is not skipped
-    if not args.skip_eval and references:
-        stats = Statistics.load_statistics(cfg.data.dataset_root + "/processed", "train")
-        eval_cb = ConformerEvaluationCallback(
-            timesteps=cfg.evaluation.timesteps,
-            compute_3D_metrics=cfg.evaluation.compute_3D_metrics,
-            compute_energy_metrics=cfg.evaluation.compute_energy_metrics,
-            energy_metrics_args=OmegaConf.to_container(cfg.evaluation.energy_metrics_args,
-                                                       resolve=True),
-            statistics=stats,
-            scale_coords=cfg.evaluation.scale_coords,
-            compute_stereo_metrics=True
-        )
-        for gen, ref in zip(generated, references):
-            if ref.GetNumConformers() == 0:
-                ref.AddConformer(Chem.Conformer(ref.GetNumAtoms()))
-                conf = gen.GetConformer(0)
-                pos = conf.GetPositions()
-                conf.SetPositions(pos)
-                ref.AddConformer(conf)
-        results = eval_cb.evaluate_molecules(generated, reference_molecules=references, device=model.device)
-        print("Evaluation Results:")
-        print(results)
-
-    print(f"Generated {len(generated)} conformers for {len(set(ids))} unique molecules.")
+    print(f"Generated {result.n_success} conformers for "
+          f"{len(result.conformers)} unique molecules "
+          f"({result.n_errors} SMILES failed validation).")
 
 
 if __name__ == "__main__":

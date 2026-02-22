@@ -5,6 +5,7 @@ Utility functions for LoQI conformer generation app.
 import sys
 import torch
 import numpy as np
+from copy import copy
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from torch_geometric.data import Data, Batch
@@ -103,7 +104,7 @@ def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, 
     return edge_index, edge_attr
 
 
-def mol_to_torch_geometric_simple(mol, smiles):
+def mol_to_torch_geometric_simple(mol, smiles, from_3d=True):
     """
     Convert RDKit molecule to PyTorch Geometric Data object with stereochemistry edges.
     
@@ -138,7 +139,7 @@ def mol_to_torch_geometric_simple(mol, smiles):
     # Add stereochemistry edges (CRITICAL for LoQI model!)
     chi_bonds = [7, 8]  # R/S stereochemistry edge types
     ez_bonds = {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6}  # E/Z edge types
-    edge_index, edge_attr = add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index, edge_attr, from_3D=True)
+    edge_index, edge_attr = add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index, edge_attr, from_3D=from_3d)
     
     return Data(
         x=atom_types,
@@ -167,17 +168,17 @@ def generate_conformers_batch(smiles, model, cfg, n_confs=10):
     """
     try:
         # Create base molecule
-        mol = smiles_to_mol(smiles, add_hs=True, embed_3d=True)
+        # embed_3d=False: coordinates are overwritten by Gaussian prior in the diffusion model.
+        # Stereochemistry is read from SMILES directly (AssignStereochemistry, not From3D).
+        mol = smiles_to_mol(smiles, add_hs=True, embed_3d=False)
         if mol is None:
             return None, None, "Invalid SMILES string or failed to embed 3D coordinates"
         
-        # Create data list for batch processing
-        data_list = []
-        reference_mols = []
-        for _ in range(n_confs):
-            data = mol_to_torch_geometric_simple(mol, smiles)
-            data_list.append(data)
-            reference_mols.append(Chem.Mol(mol))  # Copy of original molecule for reference
+        # Build PyG graph once; topology is identical for all conformers
+        # from_3D=False since we skipped ETKDG; stereo is read from SMILES
+        base_data = mol_to_torch_geometric_simple(mol, smiles, from_3d=False)
+        data_list = [copy(base_data) for _ in range(n_confs)]
+        reference_mols = [Chem.Mol(mol) for _ in range(n_confs)]
         
         # Create batch and move to device
         batch = Batch.from_data_list(data_list).to(model.device)
