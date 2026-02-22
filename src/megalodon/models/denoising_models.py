@@ -243,6 +243,7 @@ class MegaFNV3ConfWrapper(MegaFNV3Conf):
             E=batch["edge_attr_t"],
             E_idx=batch["edge_index"],
             t=time,
+            precomputed_attn_mask=batch.get("_attn_mask"),
         )
         out["h_logits"] = batch["h_t"]
         out["edge_attr_logits"] = batch["edge_attr_t"]

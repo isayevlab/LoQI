@@ -1,3 +1,24 @@
+# Claude Code and AI assistant files
+CLAUDE.md
+.claude/
+
+# Development, roadmap, and planning files
+ROADMAP.md
+ROADMAP*.md
+PLAN.md
+PLAN*.md
+PLANNING.md
+PLANNING*.md
+TODO.md
+TODO*.md
+DEVLOG.md
+DEVLOG*.md
+*.plan.md
+*.roadmap.md
+
+# Git worktrees
+.worktrees/
+
 .idea
 /scripts/results/
 /results/

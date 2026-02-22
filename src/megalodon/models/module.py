@@ -23,8 +23,6 @@ import torch.nn.functional as F
 from lightning import pytorch as pl
 from omegaconf import DictConfig, OmegaConf
 from torch_geometric.utils import dense_to_sparse, sort_edge_index
-from tqdm import tqdm
-
 from megalodon.dynamics.utils import InterpolantLossFunction
 from megalodon.interpolant.builder import build_interpolant
 from megalodon.models.denoising_models import ModelBuilder
@@ -301,8 +299,11 @@ class Graph3DInterpolantModel(pl.LightningModule):
                 for _key in combined_keys:
                     if f"{_key}_og" in batch:
                         batch[f"{_key}_t"] = batch[f"{_key}_og"]
-                    if self.interpolants[_key] and self.interpolants[_key].prior_type in ["absorb",
-                                                                                          "mask"]:
+                    # Skip softmax for null interpolants — their logits are pass-throughs never used
+                    if self.interpolants[_key] is None:
+                        out[f"{_key}_hat"] = out[f"{_key}_logits"]
+                        continue
+                    if self.interpolants[_key].prior_type in ["absorb", "mask"]:
                         logits = out[f"{_key}_logits"].clone()
                         logits[:, -1] = -1e9
                     else:
@@ -543,14 +544,62 @@ class Graph3DInterpolantModel(pl.LightningModule):
             else:
                 shape = (total_num_atoms, interpolant.num_classes)
                 data[f"{key}_t"] = prior[key] = interpolant.prior(batch_index, shape, self.device)
+
+        # Pre-encode null discrete variables once before the loop — their values never change
+        # during diffusion, so one-hot conversion can be done here instead of 25x inside the loop.
+        # Only applicable when batch is not None (i.e. data[key_t] holds integer class indices).
+        # When batch is None, data[key_t] is already a 2D float zero tensor, not integer indices.
+        _null_discrete_keys = set()
+        if batch is not None:
+            for key, interpolant in self.interpolants.items():
+                if interpolant is None:
+                    interp_param = self.interpolant_param_variables[key]
+                    if interp_param.interpolant_type is not None and "discrete" in interp_param.interpolant_type:
+                        num_classes = interp_param.num_classes
+                        data[f"{key}_t"] = F.one_hot(data[f"{key}_t"].long(), num_classes).float()
+                        _null_discrete_keys.add(key)
+
+        # Determine whether any non-null discrete variables exist (need in-loop one_hot)
+        _has_nonnull_discrete = any(
+            interpolant is not None
+            and self.interpolant_param_variables[key].interpolant_type is not None
+            and "discrete" in self.interpolant_param_variables[key].interpolant_type
+            for key, interpolant in self.interpolants.items()
+        )
+
         # Iterate through time, query the dynamics, apply interpolant step update
 
+        # Pre-build all time tensors before the loop to avoid 25x H2D transfers
+        if time_type == "continuous":
+            time_tensors = [
+                torch.full((num_samples,), float(timeline[i]), device=self.device)
+                for i in range(len(DT))
+            ]
+        else:
+            time_tensors = [
+                torch.full((num_samples,), int(timeline[i]), device=self.device, dtype=torch.long)
+                for i in range(len(DT))
+            ]
+
+        # Precompute float additive bias mask once — batch_index never changes during sampling.
+        # Float format (0.0 = attend, -inf = block) enables efficient attention dispatch in SDPA.
+        _bool_mask = (batch_index.unsqueeze(0) == batch_index.unsqueeze(1))
+        attn_mask = torch.zeros(
+            1, 1, _bool_mask.size(0), _bool_mask.size(0),
+            device=self.device, dtype=torch.float32,
+        )
+        attn_mask.masked_fill_(~_bool_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+        del _bool_mask
+
         out = {}
-        for idx in tqdm(list(range(len(DT))), total=len(DT)):
+        for idx in range(len(DT)):
             t = timeline[idx]
             dt = DT[idx]
-            time = torch.tensor([t] * num_samples).to(self.device)
-            data = self.one_hot(data)
+            time = time_tensors[idx]
+            # Null discrete variables are already one-hot (pre-encoded above).
+            # Only call one_hot for non-null discrete variables if any exist.
+            if _has_nonnull_discrete:
+                data = self.one_hot(data)
             # Apply Self Conditioning
             pre_conditioning_variables = {}
             # ! Try turning off self conditioning --> fixed some but still had edge blow ups can try adding norms here TODO
@@ -560,6 +609,7 @@ class Graph3DInterpolantModel(pl.LightningModule):
             data = self.aggregate_discrete_variables(data)
             data["batch"] = batch_index
             data["edge_index"] = edge_index
+            data["_attn_mask"] = attn_mask
             out = self.dynamics(data, time, conditional_batch=out, timesteps=timesteps)
             # ! Error is for FM sampling EQGAT is producing NANs in discrete logits
             out, data = self.separate_discrete_variables(out, data)
@@ -568,6 +618,9 @@ class Graph3DInterpolantModel(pl.LightningModule):
                 data[key] = pre_conditioning_variables[key]
             for key, interpolant in self.interpolants.items():
                 if interpolant is None:
+                    if key in _null_discrete_keys:
+                        # Already one-hot encoded before the loop; skip reset to raw integers.
+                        continue
                     prior[key] = batch[key]
                     data[f"{key}_t"] = prior[key]
                     continue
