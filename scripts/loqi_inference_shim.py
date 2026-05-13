@@ -135,6 +135,7 @@ def main(argv: list[str] | None = None) -> int:
     torch.manual_seed(args.seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(args.seed)
+    torch.use_deterministic_algorithms(True, warn_only=True)
 
     if not args.input.is_file():
         print(f"ERROR: --input {args.input} not a file", file=sys.stderr)
