@@ -11,8 +11,10 @@ import streamlit as st
 import streamlit.components.v1 as components
 import torch
 from omegaconf import OmegaConf
+import omegaconf
+from omegaconf.dictconfig import DictConfig
+from omegaconf.listconfig import ListConfig
 from rdkit import Chem
-from rdkit.Chem import Draw
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / "src"))
@@ -27,6 +29,7 @@ from utils import (
     create_sdf_content,
     generate_conformers_batch,
     get_energy_statistics,
+    render_molecule_svg,
     safe_filename_from_smiles,
     select_unique_with_irmsd,
     set_cfg_timesteps,
@@ -39,6 +42,10 @@ POSTPROCESS_OPT = "optimization"
 POSTPROCESS_OPT_IRMSD = "optimization + irmsd unique set selection"
 
 EV_TO_KCAL_PER_MOL = 23.060547830619026
+MODEL_OPTIONS = [
+    "Diffusion",
+    "Flow Matching",
+]
 
 
 @dataclass
@@ -76,7 +83,11 @@ def clone_cfg(cfg):
 
 @st.cache_resource
 def load_model(selected_model_type):
+    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     """Load model and config for selected model type."""
+    # Hidden for now to keep the app surface small:
+    # - Flow Liquid
+    # - SEMLA Fast
     if selected_model_type == "Flow Matching":
         config_path = ROOT / "scripts/conf/loqi/loqi_flow.yaml"
         ckpt_path = ROOT / "data/loqi_flow.ckpt"
@@ -86,17 +97,26 @@ def load_model(selected_model_type):
 
     cfg = OmegaConf.load(config_path)
     cfg.data.dataset_root = str(ROOT / "data/chembl3d_stereo")
+    if cfg.evaluation.energy_metrics_args is None:
+        cfg.evaluation.energy_metrics_args = OmegaConf.create({})
     cfg.evaluation.energy_metrics_args.model_path = str(
         ROOT / "src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt"
     )
+    batch_preprocessor = BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
+    torch.serialization.add_safe_globals([
+        omegaconf.dictconfig.DictConfig,
+        omegaconf.listconfig.ListConfig,
+    ])
 
     model = Graph3DInterpolantModel.load_from_checkpoint(
         str(ckpt_path),
         loss_params=cfg.loss,
         interpolant_params=cfg.interpolant,
         sampling_params=cfg.sample,
-        batch_preporcessor=BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords),
+        batch_preprocessor=batch_preprocessor,
+        weights_only=False,
     )
+    model.batch_preprocessor = batch_preprocessor
     device = "cuda" if torch.cuda.is_available() else "cpu"
     return model.to(device).eval(), cfg
 
@@ -148,9 +168,16 @@ def render_2d_preview(smiles: str) -> None:
         return
 
     try:
-        mol_2d = Chem.MolFromSmiles(smiles)
-        if mol_2d:
-            st.image(Draw.MolToImage(mol_2d, size=(400, 300)), caption="2D Structure")
+        svg = render_molecule_svg(smiles)
+        if svg:
+            svg_clean = svg.replace("<?xml version='1.0' encoding='iso-8859-1'?>", "")
+            st.markdown(
+                "<div style='background:white;border:1px solid #e5e7eb;border-radius:12px;"
+                "padding:0.5rem 0.75rem;'>"
+                + svg_clean.replace("width='900px'", "width='100%'").replace("height='320px'", "")
+                + "</div>",
+                unsafe_allow_html=True,
+            )
         else:
             st.error("Invalid SMILES string")
     except Exception as exc:
@@ -162,7 +189,7 @@ def render_3d_molecule(molecule: Chem.Mol, title: str) -> None:
     mol_block = Chem.MolToMolBlock(molecule)
     viewer = py3Dmol.view(width=600, height=400)
     viewer.addModel(mol_block, "mol")
-    viewer.setStyle({"stick": {}})
+    viewer.setStyle({"stick": {"radius": 0.15}, "sphere": {"scale": 0.25}})
     viewer.setBackgroundColor("white")
     viewer.zoomTo()
     components.html(viewer._make_html(), height=400, width=600, scrolling=False)
@@ -170,11 +197,25 @@ def render_3d_molecule(molecule: Chem.Mol, title: str) -> None:
 
 def build_sidebar_config() -> SidebarConfig:
     st.sidebar.header("Configuration")
-    model_type = st.sidebar.selectbox("Model", ["Diffusion", "Flow Matching"], index=0)
+    if "selected_model_type" not in st.session_state:
+        st.session_state.selected_model_type = MODEL_OPTIONS[0]
+    if "postprocess_mode" not in st.session_state:
+        st.session_state.postprocess_mode = POSTPROCESS_OPT
+
+    def _sync_postprocess_default() -> None:
+        if st.session_state.postprocess_mode == POSTPROCESS_NONE:
+            st.session_state.postprocess_mode = POSTPROCESS_OPT
+
+    model_type = st.sidebar.selectbox(
+        "Model",
+        MODEL_OPTIONS,
+        key="selected_model_type",
+        on_change=_sync_postprocess_default,
+    )
     postprocess_mode = st.sidebar.selectbox(
         "Postprocessing",
         [POSTPROCESS_NONE, POSTPROCESS_OPT, POSTPROCESS_OPT_IRMSD],
-        index=1,
+        key="postprocess_mode",
     )
 
     if model_type == "Flow Matching":
@@ -243,6 +284,130 @@ def build_conformer_rows(working_mols, energy_stats, energies_kcal, topology_res
     return rows
 
 
+def render_generation_results(result_data, smiles: str) -> None:
+    generated_mols = result_data["generated_mols"]
+    working_mols = result_data["working_mols"]
+    working_refs = result_data["working_refs"]
+    metrics_mols = result_data["metrics_mols"]
+    metrics_refs = result_data["metrics_refs"]
+    energies_kcal = result_data["energies_kcal"]
+    optimization_metrics = result_data["optimization_metrics"]
+    topology_results_metrics = result_data["topology_results_metrics"]
+    stereo_results_metrics = result_data["stereo_results_metrics"]
+    topology_results_display = result_data["topology_results_display"]
+    stereo_results_display = result_data["stereo_results_display"]
+    energy_stats = result_data["energy_stats"]
+    gen_time_per_structure_s = result_data["gen_time_per_structure_s"]
+
+    st.success(f"Generated {len(generated_mols)} conformers successfully.")
+    st.metric("Generation Time / Structure", f"{gen_time_per_structure_s:.4f} s")
+
+    if energy_stats is not None:
+        if energy_stats["has_preserved_conformers"]:
+            recommended_display_idx = energy_stats["preserved_min_idx"]
+        else:
+            recommended_display_idx = energy_stats["min_idx"]
+    else:
+        recommended_display_idx = 0
+
+    slider_key = "displayed_conformer"
+    if (
+        slider_key not in st.session_state
+        or st.session_state[slider_key] < 1
+        or st.session_state[slider_key] > len(working_mols)
+    ):
+        st.session_state[slider_key] = recommended_display_idx + 1
+
+    selected_conformer = st.slider(
+        "Displayed Conformer",
+        min_value=1,
+        max_value=len(working_mols),
+        key=slider_key,
+        help="Scroll through all generated conformers. Starts on the recommended best conformer.",
+    )
+    display_idx = selected_conformer - 1
+    if energy_stats is not None:
+        if display_idx == energy_stats["min_idx"]:
+            display_type = "Best of Generated (Overall)"
+        elif energy_stats["has_preserved_conformers"] and display_idx == energy_stats["preserved_min_idx"]:
+            display_type = "Lowest Energy Preserved"
+        else:
+            display_type = f"Conformer {selected_conformer}"
+    else:
+        display_type = f"Conformer {selected_conformer}"
+
+    display_mol = working_mols[display_idx]
+
+    vis_col, stats_col = st.columns([2, 1])
+    with vis_col:
+        render_3d_molecule(display_mol, display_type)
+        if energy_stats is not None:
+            st.caption(f"Recommended starting conformer: {recommended_display_idx + 1}.")
+
+    with stats_col:
+        st.subheader("Analysis")
+        if energy_stats is not None:
+            st.metric("Highest Relative Energy", f"{energy_stats['max_relative_energy']:.2f} kcal/mol")
+            st.metric("Average Relative Energy", f"{energy_stats['mean_relative_energy']:.2f} kcal/mol")
+        else:
+            st.metric("Energies", "Not computed")
+
+        if isinstance(optimization_metrics, dict):
+            if "opt_total_time" in optimization_metrics:
+                avg_opt_time = float(optimization_metrics["opt_total_time"]) / max(len(generated_mols), 1)
+                st.metric("Avg Optimization Time / Structure", f"{avg_opt_time:.4f} s")
+            if "opt_avg_energy_drop" in optimization_metrics:
+                st.metric("Avg Energy Drop", f"{optimization_metrics['opt_avg_energy_drop']:.2f} kcal/mol")
+            if "opt_converged" in optimization_metrics:
+                st.metric("Optimization Success", f"{optimization_metrics['opt_converged'] * 100:.1f}%")
+
+        st.metric("Topology Preserved", f"{topology_results_metrics['topology_preserved_percentage']:.1f}%")
+        if stereo_results_metrics["has_stereochemistry"]:
+            st.metric("Stereochemistry Preserved", f"{stereo_results_metrics['stereo_preserved_percentage']:.1f}%")
+        else:
+            st.metric("Stereochemistry", "No R/S or E/Z centers")
+
+    st.subheader("All Conformers")
+    rows = build_conformer_rows(
+        working_mols,
+        energy_stats,
+        energies_kcal,
+        topology_results_display,
+        stereo_results_display,
+        display_idx,
+    )
+    st.dataframe(pd.DataFrame(rows), use_container_width=True)
+
+    st.subheader("Download Results")
+    sdf_content = create_sdf_content(
+        working_mols,
+        energies_kcal,
+        energy_stats["min_energy"] if energy_stats is not None else None,
+    )
+    st.download_button(
+        label="📥 Download All Conformers (SDF)",
+        data=sdf_content,
+        file_name=safe_filename_from_smiles(smiles, "_conformers.sdf"),
+        mime="chemical/x-mdl-sdfile",
+    )
+
+    single_energy = [energies_kcal[display_idx]] if energies_kcal is not None else None
+    displayed_sdf_content = create_sdf_content(
+        [display_mol],
+        single_energy,
+        energy_stats["min_energy"] if energy_stats is not None else None,
+    )
+    is_preserved = energy_stats is not None and energy_stats["has_preserved_conformers"]
+    suffix = "_best_preserved.sdf" if is_preserved else "_displayed.sdf"
+    label = "📥 Download Best Preserved Conformer (SDF)" if is_preserved else "📥 Download Displayed Conformer (SDF)"
+    st.download_button(
+        label=label,
+        data=displayed_sdf_content,
+        file_name=safe_filename_from_smiles(smiles, suffix),
+        mime="chemical/x-mdl-sdfile",
+    )
+
+
 st.set_page_config(page_title="LoQI Conformer Generator", page_icon="🧬", layout="wide")
 st.title("🧬 LoQI: Low-Energy QM Informed Conformer Generator")
 st.markdown("Generate and visualize low-energy molecular conformers with quantum mechanical accuracy")
@@ -293,9 +458,6 @@ if generate_button and smiles:
         else:
             st.error(f"Error generating conformers: {error}")
     elif generated_mols:
-        st.success(f"Generated {len(generated_mols)} conformers successfully.")
-        st.metric("Generation Time / Structure", f"{gen_time_per_structure_s:.4f} s")
-
         working_mols = generated_mols
         working_refs = reference_mols
         metrics_mols = generated_mols
@@ -351,77 +513,34 @@ if generate_button and smiles:
                 display_type = "Best of Generated (Overall)"
         else:
             energy_stats = None
-            display_idx = 0
-            display_type = "First Generated Conformer"
+            energy_stats = None
 
-        display_mol = working_mols[display_idx]
-
-        vis_col, stats_col = st.columns([2, 1])
-        with vis_col:
-            render_3d_molecule(display_mol, display_type)
-
-        with stats_col:
-            st.subheader("Analysis")
-            if energy_stats is not None:
-                st.metric("Highest Relative Energy", f"{energy_stats['max_relative_energy']:.2f} kcal/mol")
-                st.metric("Average Relative Energy", f"{energy_stats['mean_relative_energy']:.2f} kcal/mol")
+        st.session_state.generated_results = {
+            "smiles": smiles,
+            "generated_mols": generated_mols,
+            "working_mols": working_mols,
+            "working_refs": working_refs,
+            "metrics_mols": metrics_mols,
+            "metrics_refs": metrics_refs,
+            "energies_kcal": energies_kcal,
+            "optimization_metrics": optimization_metrics,
+            "topology_results_metrics": topology_results_metrics,
+            "stereo_results_metrics": stereo_results_metrics,
+            "topology_results_display": topology_results_display,
+            "stereo_results_display": stereo_results_display,
+            "energy_stats": energy_stats,
+            "gen_time_per_structure_s": gen_time_per_structure_s,
+        }
+        if energy_stats is not None:
+            if energy_stats["has_preserved_conformers"]:
+                st.session_state.displayed_conformer = energy_stats["preserved_min_idx"] + 1
             else:
-                st.metric("Energies", "Not computed")
+                st.session_state.displayed_conformer = energy_stats["min_idx"] + 1
+        else:
+            st.session_state.displayed_conformer = 1
 
-            if isinstance(optimization_metrics, dict):
-                if "opt_total_time" in optimization_metrics:
-                    avg_opt_time = float(optimization_metrics["opt_total_time"]) / max(len(generated_mols), 1)
-                    st.metric("Avg Optimization Time / Structure", f"{avg_opt_time:.4f} s")
-                if "opt_avg_energy_drop" in optimization_metrics:
-                    st.metric("Avg Energy Drop", f"{optimization_metrics['opt_avg_energy_drop']:.2f} kcal/mol")
-                if "opt_converged" in optimization_metrics:
-                    st.metric("Optimization Success", f"{optimization_metrics['opt_converged'] * 100:.1f}%")
-
-            st.metric("Topology Preserved", f"{topology_results_metrics['topology_preserved_percentage']:.1f}%")
-            if stereo_results_metrics["has_stereochemistry"]:
-                st.metric("Stereochemistry Preserved", f"{stereo_results_metrics['stereo_preserved_percentage']:.1f}%")
-            else:
-                st.metric("Stereochemistry", "No R/S or E/Z centers")
-
-        st.subheader("All Conformers")
-        rows = build_conformer_rows(
-            working_mols,
-            energy_stats,
-            energies_kcal,
-            topology_results_display,
-            stereo_results_display,
-            display_idx,
-        )
-        st.dataframe(pd.DataFrame(rows), use_container_width=True)
-
-        st.subheader("Download Results")
-        sdf_content = create_sdf_content(
-            working_mols,
-            energies_kcal,
-            energy_stats["min_energy"] if energy_stats is not None else None,
-        )
-        st.download_button(
-            label="📥 Download All Conformers (SDF)",
-            data=sdf_content,
-            file_name=safe_filename_from_smiles(smiles, "_conformers.sdf"),
-            mime="chemical/x-mdl-sdfile",
-        )
-
-        single_energy = [energies_kcal[display_idx]] if energies_kcal is not None else None
-        displayed_sdf_content = create_sdf_content(
-            [display_mol],
-            single_energy,
-            energy_stats["min_energy"] if energy_stats is not None else None,
-        )
-        is_preserved = energy_stats is not None and energy_stats["has_preserved_conformers"]
-        suffix = "_best_preserved.sdf" if is_preserved else "_displayed.sdf"
-        label = "📥 Download Best Preserved Conformer (SDF)" if is_preserved else "📥 Download Displayed Conformer (SDF)"
-        st.download_button(
-            label=label,
-            data=displayed_sdf_content,
-            file_name=safe_filename_from_smiles(smiles, suffix),
-            mime="chemical/x-mdl-sdfile",
-        )
+if "generated_results" in st.session_state:
+    render_generation_results(st.session_state.generated_results, st.session_state.generated_results["smiles"])
 
 st.markdown("---")
 st.markdown("**LoQI**: Low-energy QM Informed conformer generation with stereochemistry awareness")

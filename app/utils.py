@@ -4,9 +4,13 @@ Utility functions for LoQI conformer generation app.
 
 import sys
 import time
-import torch
+from typing import Optional
+
 import numpy as np
+import torch
 from rdkit import Chem
+from rdkit.Chem import rdDepictor
+from rdkit.Chem.Draw import rdMolDraw2D
 from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
@@ -20,7 +24,60 @@ from megalodon.data.adaptive_dataloader import AdaptiveBatchSampler
 from megalodon.inference.validation import SUPPORTED_ELEMENTS, validate_smiles
 from megalodon.metrics.molecule_evaluation_callback import full_atom_encoder
 from megalodon.metrics.aimnet2.check_topology import check_topology
-from megalodon.metrics.preserved_stereo import get_stereochemistry_descriptor
+from megalodon.metrics.preserved_stereo import (
+    get_stereochemistry_descriptor,
+    prepare_mol_for_conformer_eval,
+)
+
+
+def _clean_spurious_stereo(mol: Chem.Mol) -> Chem.Mol:
+    """Keep only real tetrahedral carbon stereo while preserving E/Z stereo."""
+    mol = Chem.RWMol(mol)
+    Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
+    true_centers = {
+        idx
+        for idx, _ in Chem.FindMolChiralCenters(mol, includeUnassigned=False)
+        if mol.GetAtomWithIdx(idx).GetAtomicNum() == 6
+    }
+    for atom in mol.GetAtoms():
+        if atom.GetIdx() not in true_centers:
+            atom.SetChiralTag(Chem.ChiralType.CHI_UNSPECIFIED)
+    return Chem.Mol(mol)
+
+
+def render_molecule_svg(smiles: str, width: int = 900, height: int = 320) -> Optional[str]:
+    """Render a molecule as a styled RDKit SVG similar to the RitS app."""
+    ps = Chem.SmilesParserParams()
+    ps.removeHs = False
+    mol = Chem.MolFromSmiles(smiles, ps)
+    if mol is None:
+        return None
+
+    Chem.SanitizeMol(mol)
+    Chem.Kekulize(mol, clearAromaticFlags=True)
+    mol = Chem.RemoveAllHs(mol)
+    mol = _clean_spurious_stereo(mol)
+    rdDepictor.Compute2DCoords(mol)
+    num_atoms = mol.GetNumAtoms()
+
+    bond_line_width = 3.0
+    if num_atoms > 140:
+        bond_line_width /= 4.0
+    elif num_atoms > 70:
+        bond_line_width /= 2.0
+
+    drawer = rdMolDraw2D.MolDraw2DSVG(width, height)
+    opts = drawer.drawOptions()
+    opts.bondLineWidth = bond_line_width
+    opts.baseFontSize = 0.9
+    opts.minFontSize = 14
+    opts.maxFontSize = 32
+    opts.padding = 0.05
+    opts.addStereoAnnotation = True
+    opts.clearBackground = True
+    drawer.DrawMolecule(mol)
+    drawer.FinishDrawing()
+    return drawer.GetDrawingText()
 
 
 def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, from_3D=True):
@@ -360,6 +417,20 @@ def get_energy_statistics(energies_kcal, topology_results=None, stereo_results=N
     Returns:
         dict: Dictionary with energy statistics (relative to minimum)
     """
+    energies_kcal = np.asarray(energies_kcal, dtype=float)
+    if energies_kcal.size == 0:
+        return {
+            "min_energy": None,
+            "max_relative_energy": None,
+            "mean_relative_energy": None,
+            "energy_range": None,
+            "min_idx": None,
+            "preserved_min_energy": None,
+            "preserved_min_idx": None,
+            "has_preserved_conformers": False,
+            "has_energies": False,
+        }
+
     min_energy = float(np.min(energies_kcal))
     min_idx = int(np.argmin(energies_kcal))
     
@@ -400,119 +471,87 @@ def get_energy_statistics(energies_kcal, topology_results=None, stereo_results=N
         "min_idx": min_idx,
         "preserved_min_energy": preserved_min_energy,
         "preserved_min_idx": preserved_min_idx,
-        "has_preserved_conformers": preserved_min_idx is not None
+        "has_preserved_conformers": preserved_min_idx is not None,
+        "has_energies": True,
     }
 
 
 def check_topology_preservation(molecules):
-    """
-    Check topology preservation for a list of molecules.
-    
-    Args:
-        molecules (list): List of RDKit molecules
-        
-    Returns:
-        dict: Topology preservation statistics
-    """
+    """Check topology preservation for a list of molecules."""
     try:
         topology_results = []
         for mol in molecules:
             if mol is None or mol.GetNumConformers() == 0:
                 topology_results.append(False)
                 continue
-                
+
+            mol = prepare_mol_for_conformer_eval(mol)
+            if mol is None:
+                topology_results.append(False)
+                continue
+
             adjacency_matrix = Chem.GetAdjacencyMatrix(mol)
             coordinates = np.array(mol.GetConformer().GetPositions().tolist()).reshape(1, -1, 3)
             numbers = np.array([atom.GetAtomicNum() for atom in mol.GetAtoms()])
-            
             result = check_topology(adjacency_matrix, numbers, coordinates)
             topology_results.append(bool(result[0]))
-        
+
         preserved_count = sum(topology_results)
         total_count = len(topology_results)
-        
         return {
-            "topology_preserved_count": preserved_count,
-            "topology_preserved_percentage": (preserved_count / total_count * 100) if total_count > 0 else 0.0,
-            "topology_results": topology_results
+            'topology_preserved_count': preserved_count,
+            'topology_preserved_percentage': (preserved_count / total_count * 100) if total_count > 0 else 0.0,
+            'topology_results': topology_results,
         }
     except Exception as e:
         return {
-            "topology_preserved_count": 0,
-            "topology_preserved_percentage": 0.0,
-            "topology_results": [False] * len(molecules),
-            "error": str(e)
+            'topology_preserved_count': 0,
+            'topology_preserved_percentage': 0.0,
+            'topology_results': [False] * len(molecules),
+            'error': str(e),
         }
 
 
 def check_stereochemistry_preservation(generated_molecules, reference_molecules):
-    """
-    Check stereochemistry preservation between generated and reference molecules.
-    Uses the same logic as StereoMetrics but processes molecules individually.
-    
-    Args:
-        generated_molecules (list): List of generated RDKit molecules
-        reference_molecules (list): List of reference RDKit molecules
-        
-    Returns:
-        dict: Stereochemistry preservation statistics
-    """
+    """Check stereochemistry preservation between generated and reference molecules."""
     if not reference_molecules or len(generated_molecules) != len(reference_molecules):
         return {
-            "stereo_preserved_count": 0,
-            "stereo_preserved_percentage": 0.0,
-            "has_stereochemistry": False,
-            "error": "Reference molecules not available or count mismatch"
+            'stereo_preserved_count': 0,
+            'stereo_preserved_percentage': 0.0,
+            'has_stereochemistry': False,
+            'error': 'Reference molecules not available or count mismatch',
         }
-    
+
     preserved_stereo = []
     has_stereo = False
-    
-    # Process each molecule pair individually using StereoMetrics logic
     for mol, ref_mol in zip(generated_molecules, reference_molecules):
         if mol is None or ref_mol is None:
             preserved_stereo.append(False)
             continue
-        
-        # Make copies to avoid modifying originals
-        mol_copy = Chem.Mol(mol)
-        ref_copy = Chem.Mol(ref_mol)
-        
-        # Assign stereochemistry from 3D coordinates (same as StereoMetrics)
-        Chem.rdmolops.AssignStereochemistryFrom3D(ref_copy)
-        Chem.rdmolops.AssignStereochemistryFrom3D(mol_copy)
-        
-        # Get descriptors (same as StereoMetrics)
+
+        mol_copy = prepare_mol_for_conformer_eval(mol, assign_from_3d=True)
+        ref_copy = prepare_mol_for_conformer_eval(ref_mol, assign_from_3d=True)
+        if mol_copy is None or ref_copy is None:
+            preserved_stereo.append(False)
+            continue
+
         sr, _, ez = get_stereochemistry_descriptor(mol_copy)
         ref_sr, _, ref_ez = get_stereochemistry_descriptor(ref_copy)
-        
-        # Check if molecule has stereochemistry
+
         if ref_sr or ref_ez:
             has_stereo = True
-            
-            # Compare only generated stereochemistry as-is (no inversion fallback).
-            rs_correct_orig = True
-            if ref_sr:
-                rs_correct_orig = (sr == ref_sr)
-            ez_correct_orig = True
-            if ref_ez:
-                ez_correct_orig = (ez == ref_ez)
-            preservation_orig = rs_correct_orig and ez_correct_orig
-            preserved_stereo.append(preservation_orig)
+            rs_correct_orig = True if not ref_sr else (sr == ref_sr)
+            ez_correct_orig = True if not ref_ez else (ez == ref_ez)
+            preserved_stereo.append(rs_correct_orig and ez_correct_orig)
         else:
-            # No stereochemistry to preserve
             preserved_stereo.append(True)
-    
-    # Calculate statistics
+
     preserved_count = sum(preserved_stereo)
     total_count = len(preserved_stereo)
     preserved_percentage = (preserved_count / total_count * 100) if total_count > 0 else 0.0
-    
     return {
-        "stereo_preserved_count": preserved_count,
-        "stereo_preserved_percentage": preserved_percentage,
-        "has_stereochemistry": has_stereo,
-        "stereo_results": {
-            "preserved_stereo": preserved_stereo
-        }
-    } 
+        'stereo_preserved_count': preserved_count,
+        'stereo_preserved_percentage': preserved_percentage,
+        'has_stereochemistry': has_stereo,
+        'stereo_results': {'preserved_stereo': preserved_stereo},
+    }

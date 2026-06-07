@@ -7,6 +7,9 @@ from torch_geometric.loader import DataLoader
 import torch
 import numpy as np
 from omegaconf import OmegaConf
+import omegaconf
+from omegaconf.dictconfig import DictConfig
+from omegaconf.listconfig import ListConfig
 from copy import deepcopy
 from torch_geometric.data import Data
 
@@ -79,7 +82,7 @@ def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, 
     return edge_index, edge_attr
 
 
-def mol_to_torch_geometric(mol, smiles, use_3d_input=False):
+def mol_to_torch_geometric(mol, smiles, use_3d_input=False, use_stereo_bonds=True):
     Chem.SanitizeMol(mol)
     Chem.Kekulize(mol, clearAromaticFlags=True)
     adj = torch.from_numpy(Chem.rdmolops.GetAdjacencyMatrix(mol, useBO=True))
@@ -96,11 +99,12 @@ def mol_to_torch_geometric(mol, smiles, use_3d_input=False):
     atom_types = torch.tensor([full_atom_encoder[atom.GetSymbol()] for atom in mol.GetAtoms()], dtype=torch.uint8)
     all_charges = torch.tensor([atom.GetFormalCharge() for atom in mol.GetAtoms()], dtype=torch.int8)
 
-    chi_bonds = [7, 8]
-    ez_bonds = {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6}
-    edge_index, edge_attr = add_stereo_bonds(
-        mol, chi_bonds, ez_bonds, edge_index, edge_attr, from_3D=use_3d_input
-    )
+    if use_stereo_bonds:
+        chi_bonds = [7, 8]
+        ez_bonds = {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6}
+        edge_index, edge_attr = add_stereo_bonds(
+            mol, chi_bonds, ez_bonds, edge_index, edge_attr, from_3D=use_3d_input
+        )
 
     return Data(
         x=atom_types,
@@ -114,9 +118,11 @@ def mol_to_torch_geometric(mol, smiles, use_3d_input=False):
     )
 
 
-def raw_to_pyg(rdkit_mol, use_3d_input=False):
+def raw_to_pyg(rdkit_mol, use_3d_input=False, use_stereo_bonds=True):
     smiles = Chem.MolToSmiles(rdkit_mol)
-    return mol_to_torch_geometric(rdkit_mol, smiles, use_3d_input=use_3d_input)
+    return mol_to_torch_geometric(
+        rdkit_mol, smiles, use_3d_input=use_3d_input, use_stereo_bonds=use_stereo_bonds
+    )
 
 
 def load_rdkit_molecules(input_path_or_smiles, add_hs=True):
@@ -193,7 +199,7 @@ def load_rdkit_molecules(input_path_or_smiles, add_hs=True):
     return mols, errors
 
 
-def mols_to_data_list(mols, n_confs=1, use_3d_input=False):
+def mols_to_data_list(mols, n_confs=1, use_3d_input=False, use_stereo_bonds=True):
     """Replicate each molecule n_confs times and convert to torch geometric Data objects."""
     data_list = []
     for mol in mols:
@@ -201,7 +207,9 @@ def mols_to_data_list(mols, n_confs=1, use_3d_input=False):
             continue
             
         for _ in range(n_confs):
-            data = raw_to_pyg(Chem.Mol(mol), use_3d_input=use_3d_input)
+            data = raw_to_pyg(
+                Chem.Mol(mol), use_3d_input=use_3d_input, use_stereo_bonds=use_stereo_bonds
+            )
             data_list.append(data)
     return data_list
 
@@ -291,6 +299,7 @@ def select_unique_with_irmsd(molecules, rthr=0.125):
 
 
 def main():
+    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     parser = ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--config", type=str, required=True)
@@ -369,6 +378,15 @@ def main():
         default=False,
         help="Shuffle conformer replicas before batching. Use --no-shuffle to disable.",
     )
+    parser.add_argument(
+        "--use-stereo-bonds",
+        action=BooleanOptionalAction,
+        default=True,
+        help=(
+            "Add stereochemistry-derived graph edges during featurization. "
+            "Use --no-use-stereo-bonds for ablation experiments."
+        ),
+    )
     args = parser.parse_args()
 
     # Load model
@@ -392,13 +410,20 @@ def main():
     atom_aware_batching = bool(args.atom_aware_batching)
     shuffle = bool(args.shuffle)
     target_molecule_size = int(args.target_molecule_size)
+    batch_preprocessor = BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
+    torch.serialization.add_safe_globals([
+        omegaconf.dictconfig.DictConfig,
+        omegaconf.listconfig.ListConfig,
+    ])
     model = Graph3DInterpolantModel.load_from_checkpoint(
         args.ckpt,
         loss_params=cfg.loss,
         interpolant_params=cfg.interpolant,
         sampling_params=cfg.sample,
-        batch_preporcessor=BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
+        batch_preprocessor=batch_preprocessor,
+        weights_only=False,
     )
+    model.batch_preprocessor = batch_preprocessor
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model = model.to(device).eval()
 
@@ -412,7 +437,12 @@ def main():
         raise ValueError("No valid molecules left after validation/revalidation checks.")
     has_3d_input = any(mol.GetNumConformers() > 0 for mol in mols) if input_is_sdf else False
     use_3d_input = input_is_sdf and has_3d_input
-    data_list = mols_to_data_list(mols, n_confs=args.n_confs, use_3d_input=use_3d_input)
+    data_list = mols_to_data_list(
+        mols,
+        n_confs=args.n_confs,
+        use_3d_input=use_3d_input,
+        use_stereo_bonds=bool(args.use_stereo_bonds),
+    )
     loader = build_sampling_loader(
         data_list=data_list,
         sample_batch_size=sample_batch_size,

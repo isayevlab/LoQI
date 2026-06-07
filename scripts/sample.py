@@ -18,6 +18,8 @@ import pickle
 import argparse
 from pathlib import Path
 from omegaconf import OmegaConf
+from omegaconf.dictconfig import DictConfig
+from omegaconf.listconfig import ListConfig
 from rdkit import Chem
 import torch
 import omegaconf
@@ -72,11 +74,12 @@ def load_model(ckpt_path, cfg):
     print(f"Loading model from checkpoint: {ckpt_path}")
     
     # Add safe globals for loading checkpoint
-    torch.serialization.add_safe_globals([omegaconf.dictconfig.DictConfig])
+    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     
     model = Graph3DInterpolantModel.load_from_checkpoint(ckpt_path, 
                                                          interpolant_params=cfg.interpolant,
-                                                         sampling_params=cfg.sample)
+                                                         sampling_params=cfg.sample,
+                                                         weights_only=False)
     print(f"✓ Model loaded successfully from {Path(ckpt_path).name}")
 
     # Calculate and print the number of model parameters

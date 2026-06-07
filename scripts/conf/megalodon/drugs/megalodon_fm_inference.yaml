@@ -99,18 +99,29 @@ interpolant:
 
 
 dynamics:
-  model_name: "mimic_semla"
+  model_name: "semla_pyg"
   model_args:
-    atom_classes: 18
-    edge_classes: 5
-    invariant_edge_feat_dim: 256
-    invariant_node_feat_dim: 256
-    equivariant_node_feature_dim: 3
-    num_layers: 10
-    num_heads: 4
+    d_model: 384
+    vocab_size: 16
+    n_atom_feats: 17
+    d_edge: 128
+    n_edge_types: 5
+    self_cond: true
+    size_emb: 64
+    max_atoms: 256
+    dynamics_args:
+      d_model: 384
+      d_message: 128
+      n_coord_sets: 64
+      n_layers: 12
+      n_attn_heads: 32
+      d_message_hidden: 128
+      d_edge: 128
+      bond_refine: true
+      self_cond: true
+      coord_norm: "length"
   wrapper_args: null
 
-self_conditioning: null
 
 sample:
   node_distribution: null # "${data.dataset_root}/processed/train_n_h.pickle" # null

@@ -23,10 +23,8 @@ from torch_geometric.data import Data
 from megalodon.dynamics.eqgat.eqgat_wrapper import EQGATWrapper
 from megalodon.dynamics.fn_model import MegaFNV3, MegaFNV3Conf
 from megalodon.dynamics.mega_large import MegalodonDotFN
-from megalodon.dynamics.megaflow_semla_ckpt.mimic_semla_wrapper import MimicSemlaWrapper
-from megalodon.dynamics.megaflow_semla_ckpt.original_semla_ckpt import \
-    MimicOriginalSemlaWrapper
-from megalodon.dynamics.megaflow_semla_ckpt.semla_wrapper import SemlaWrapper
+from megalodon.dynamics.semla.pyg_wrapper import SemlaPyGWrapper
+from megalodon.dynamics.semla.conf_wrapper import SemlaConfWrapper
 from megalodon.dynamics.jodo import DGT_concat
 from megalodon.dynamics.nextmol import DGTDiffusion
 
@@ -38,10 +36,9 @@ class ModelBuilder:
         """Initializes the ModelBuilder with a dictionary of available model classes."""
         self.model_classes = {"megav3": MegaFNV3Wrapper, 
                               "megav3conf": MegaFNV3ConfWrapper,
-                              "mimic_semla": MimicSemlaWrapper, 
                               "mega_large": MegaLargeWrapper,
-                              "original_semla": MimicOriginalSemlaWrapper,
-                              "semla": SemlaWrapper, 
+                              "semla_pyg": SemlaPyGWrapper,
+                              "semla_conf": SemlaConfWrapper,
                               "eqgat": EQGATWrapper,
                               "jodo": JODOWrapper,
                               "nextmolconf": NextMolConfWrapper,

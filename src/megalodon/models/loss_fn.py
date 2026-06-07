@@ -61,7 +61,7 @@ class Forces(nn.Module):
 class AIMNet2ForcesLoss:
     def __init__(self, model_path, charge="charges", max_forces=0.05, min_time=0.9, atomics="h", coord="x", weight=1.0):
         super().__init__()
-        self.nnip = Forces(torch.load(model_path))
+        self.nnip = Forces(torch.load(model_path, weights_only=False))
         self.max_forces = max_forces
         self.min_time = min_time
         self.atomics = atomics

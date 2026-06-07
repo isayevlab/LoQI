@@ -99,7 +99,7 @@ interpolant:
 
 
 dynamics:
-  model_name: "semla"
+  model_name: "semla_pyg"
   model_args:
     d_model: 384
     vocab_size: 17

@@ -47,6 +47,7 @@ def main(cfg: DictConfig) -> None:
 
     batch_preprocessor = BatchPreProcessor(aug_rotations=cfg.data.aug_rotations,
                                         scale_coords=cfg.data.scale_coords)
+    init_from_ckpt = OmegaConf.select(cfg, "init_from_ckpt", default=None)
     if cfg.resume:
         if os.path.isdir(cfg.resume):
             cfg.resume = f"{cfg.resume}/last.ckpt"
@@ -58,7 +59,24 @@ def main(cfg: DictConfig) -> None:
                                                                  loss_params=cfg.loss,
                                                                  interpolant_params=cfg.interpolant,
                                                                  sampling_params=cfg.sample,
-                                                                 batch_preprocessor=batch_preprocessor)
+                                                                 batch_preprocessor=batch_preprocessor,
+                                                                 weights_only=False)
+    elif init_from_ckpt:
+        pl_module = Graph3DInterpolantModel.load_from_checkpoint(
+            init_from_ckpt,
+            loss_fn=loss_fn,
+            optimizer_params=cfg.optimizer,
+            lr_scheduler_params=cfg.lr_scheduler,
+            dynamics_params=cfg.dynamics,
+            loss_params=cfg.loss,
+            interpolant_params=cfg.interpolant,
+            sampling_params=cfg.sample,
+            self_cond_params=OmegaConf.select(cfg, "self_conditioning", default=None),
+            ema=OmegaConf.select(cfg, "ema", default=True),
+            batch_preprocessor=batch_preprocessor,
+            weights_only=False,
+        )
+        ckpt = None
     else:
         pl_module = Graph3DInterpolantModel(
             loss_params=cfg.loss,
