@@ -1,5 +1,5 @@
 import time
-import warnings
+from pathlib import Path
 from copy import deepcopy
 from typing import Dict
 
@@ -270,11 +270,12 @@ class Forces(nn.Module):
 
 
 def load_aimnet2_module(model_path, device="cpu"):
-    """Load AIMNet2 through ``torch.load`` for PyTorch 2.6+ compatibility."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        model = torch.load(model_path, map_location=device, weights_only=False)
+    """Load AIMNet2, preferring direct TorchScript loading for .jpt artifacts."""
+    model_path = Path(model_path)
+    if model_path.suffix == ".jpt":
+        return torch.jit.load(str(model_path), map_location=device)
 
+    model = torch.load(str(model_path), map_location=device, weights_only=False)
     if not isinstance(model, nn.Module):
         raise TypeError(f"Unsupported AIMNet2 model object: {type(model)!r}")
     return model

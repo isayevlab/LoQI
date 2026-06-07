@@ -11,9 +11,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 import torch
 from omegaconf import OmegaConf
-import omegaconf
-from omegaconf.dictconfig import DictConfig
-from omegaconf.listconfig import ListConfig
 from rdkit import Chem
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -83,7 +80,6 @@ def clone_cfg(cfg):
 
 @st.cache_resource
 def load_model(selected_model_type):
-    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     """Load model and config for selected model type."""
     # Hidden for now to keep the app surface small:
     # - Flow Liquid
@@ -103,10 +99,6 @@ def load_model(selected_model_type):
         ROOT / "src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt"
     )
     batch_preprocessor = BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
-    torch.serialization.add_safe_globals([
-        omegaconf.dictconfig.DictConfig,
-        omegaconf.listconfig.ListConfig,
-    ])
 
     model = Graph3DInterpolantModel.load_from_checkpoint(
         str(ckpt_path),

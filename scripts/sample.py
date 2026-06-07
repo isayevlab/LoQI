@@ -18,11 +18,8 @@ import pickle
 import argparse
 from pathlib import Path
 from omegaconf import OmegaConf
-from omegaconf.dictconfig import DictConfig
-from omegaconf.listconfig import ListConfig
 from rdkit import Chem
 import torch
-import omegaconf
 
 from megalodon.data.molecule_datamodule import MoleculeDataModule
 from megalodon.metrics.molecule_evaluation_callback import MoleculeEvaluationCallback
@@ -72,10 +69,7 @@ def load_model(ckpt_path, cfg):
     Load the model from the checkpoint using standard PyTorch Lightning method.
     """
     print(f"Loading model from checkpoint: {ckpt_path}")
-    
-    # Add safe globals for loading checkpoint
-    torch.serialization.add_safe_globals([DictConfig, ListConfig])
-    
+        
     model = Graph3DInterpolantModel.load_from_checkpoint(ckpt_path, 
                                                          interpolant_params=cfg.interpolant,
                                                          sampling_params=cfg.sample,

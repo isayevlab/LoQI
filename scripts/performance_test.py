@@ -7,9 +7,6 @@ from pathlib import Path
 import numpy as np
 import torch
 from omegaconf import OmegaConf
-import omegaconf
-from omegaconf.dictconfig import DictConfig
-from omegaconf.listconfig import ListConfig
 from rdkit import Chem
 from rdkit.Chem import SDWriter
 
@@ -102,7 +99,6 @@ def write_sdf_set(dataset, selected_indices, outdir: Path):
 
 
 def load_model(cfg_path: Path, ckpt_path: Path, n_steps: int):
-    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     cfg = OmegaConf.load(str(cfg_path))
     model = Graph3DInterpolantModel.load_from_checkpoint(
         str(ckpt_path),

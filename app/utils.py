@@ -4,6 +4,7 @@ Utility functions for LoQI conformer generation app.
 
 import sys
 import time
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -15,7 +16,8 @@ from torch_geometric.data import Data
 from torch_geometric.loader import DataLoader
 
 # Add src to path for imports
-sys.path.append('/home/fnikitin/LoQI/src')
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.append(str(ROOT / 'src'))
 
 from megalodon.metrics.conformer_evaluation_callback import (
     write_coords_to_mol, convert_coords_to_np

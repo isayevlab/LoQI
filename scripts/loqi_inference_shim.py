@@ -32,18 +32,13 @@ from pathlib import Path
 import torch
 
 # Make megalodon importable from the LoQI repo source tree.
-LOQI_ROOT = Path("/home/olexandr/LoQI")
+LOQI_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(LOQI_ROOT / "src"))
 sys.path.insert(0, str(LOQI_ROOT / "app"))
 
 import omegaconf  # noqa: E402  -- needed for ckpt unpickling
 from omegaconf import OmegaConf  # noqa: E402
 from rdkit import Chem  # noqa: E402
-
-torch.serialization.add_safe_globals([
-    omegaconf.dictconfig.DictConfig,
-    omegaconf.listconfig.ListConfig,
-])
 
 from megalodon.models.module import Graph3DInterpolantModel  # noqa: E402
 from utils import generate_conformers_batch  # noqa: E402  app/utils.py

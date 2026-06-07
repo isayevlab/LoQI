@@ -7,9 +7,6 @@ from torch_geometric.loader import DataLoader
 import torch
 import numpy as np
 from omegaconf import OmegaConf
-import omegaconf
-from omegaconf.dictconfig import DictConfig
-from omegaconf.listconfig import ListConfig
 from copy import deepcopy
 from torch_geometric.data import Data
 
@@ -299,7 +296,6 @@ def select_unique_with_irmsd(molecules, rthr=0.125):
 
 
 def main():
-    torch.serialization.add_safe_globals([DictConfig, ListConfig])
     parser = ArgumentParser()
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--config", type=str, required=True)
@@ -411,10 +407,6 @@ def main():
     shuffle = bool(args.shuffle)
     target_molecule_size = int(args.target_molecule_size)
     batch_preprocessor = BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
-    torch.serialization.add_safe_globals([
-        omegaconf.dictconfig.DictConfig,
-        omegaconf.listconfig.ListConfig,
-    ])
     model = Graph3DInterpolantModel.load_from_checkpoint(
         args.ckpt,
         loss_params=cfg.loss,
