@@ -51,7 +51,7 @@ from torch_geometric.data import Data
 from megalodon.models.module import Graph3DInterpolantModel
 from megalodon.data.adaptive_dataloader import AdaptiveBatchSampler
 from megalodon.data.batch_preprocessor import BatchPreProcessor
-from megalodon.data.molecule_datamodule import MoleculeDataModule
+from megalodon.data.molecule_dataset import MoleculeDataset
 from megalodon.data.statistics import Statistics
 from megalodon.inference.validation import SUPPORTED_ELEMENTS, validate_rdkit_mol, validate_smiles
 from megalodon.metrics.molecule_metrics_aimnet2 import MoleculeAIMNet2Metrics
@@ -459,30 +459,30 @@ def main():
     processed_stats_dir = f"{cfg.data.dataset_root}/processed"
 
     if os.path.isdir(args.input):
-        # Processed-dataset path: load Data objects the same way train.py does, via
-        # MoleculeDataModule, and pick the requested split's dataloader.
-        #
-        # Force data_loader_type="adaptive" here regardless of cfg.data.data_loader_type:
-        # this script needs to enumerate every molecule in the split exactly once, and only
-        # AdaptiveBatchSampler guarantees that (it tracks skipped indices and requeues them).
-        # The "midi" loader (used by train.py for train/val, where partial per-epoch coverage
-        # is masked by shuffling across many epochs) silently drops molecules that don't fit
-        # its size-bucket window with no requeue, which undercounts a single-pass split badly.
+        # Processed-dataset path: load the requested split directly via MoleculeDataset (the
+        # same on-disk Data objects train.py uses), replicate each molecule --n_confs times,
+        # and sample through build_sampling_loader/AdaptiveBatchSampler -- the same path used
+        # for SMILES/SDF input below. AdaptiveBatchSampler tracks skipped indices and requeues
+        # them, guaranteeing every (molecule, replica) pair is enumerated exactly once; the
+        # "midi" loader used by train.py for train/val has no such guarantee (it silently
+        # drops molecules that don't fit its size-bucket window, tolerable there only because
+        # shuffling across many epochs eventually covers most of the data).
         dataset_root = os.path.dirname(os.path.normpath(args.input))
         processed_folder = os.path.basename(os.path.normpath(args.input))
-        datamodule = MoleculeDataModule(
-            dataset_root,
-            processed_folder,
-            cfg.data.batch_size,
-            "adaptive",
-            sample_batch_size,
-            reference_size=target_molecule_size,
+        split_dataset = MoleculeDataset(root=dataset_root, processed_folder=processed_folder, split=args.split)
+        data_list = []
+        for data in split_dataset:
+            for _ in range(args.n_confs):
+                replica = deepcopy(data)
+                replica.mol = Chem.Mol(data.mol)
+                data_list.append(replica)
+        loader = build_sampling_loader(
+            data_list=data_list,
+            sample_batch_size=sample_batch_size,
+            atom_aware_batching=atom_aware_batching,
+            shuffle=shuffle,
+            target_molecule_size=target_molecule_size,
         )
-        loader = {
-            "train": datamodule.train_dataloader,
-            "val": datamodule.val_dataloader,
-            "test": datamodule.test_dataloader,
-        }[args.split]()
         has_3d_input = True  # processed dataset molecules always carry a reference conformer
         processed_stats_dir = f"{dataset_root}/{processed_folder}"
     else:
