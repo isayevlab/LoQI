@@ -1,5 +1,4 @@
 import time
-from pathlib import Path
 from copy import deepcopy
 from typing import Dict
 
@@ -16,7 +15,6 @@ from megalodon.metrics.aimnet2.pair_geometry import (
     compute_bond_angles_diff,
     compute_torsion_angles_diff,
 )
-from megalodon.metrics.preserved_stereo import prepare_mol_for_conformer_eval
 
 
 def is_valid(mol, verbose=False):
@@ -74,7 +72,14 @@ def collect_geometry(pairs, compute_function):
                 opt = Chem.Mol(pair[1])
                 Chem.SanitizeMol(opt)
                 result = compute_function((init, opt))
-                values = torch.cat([torch.tensor(v[0]) for v in result.values()])
+                try:
+                    values = torch.cat([torch.tensor(v[0]) for v in result.values()])
+                except Exception as e:
+                    print(f"Error processing molecule {idx}: {e}")
+                    print(f"Number of atoms: init {init.GetNumAtoms()} and opt {opt.GetNumAtoms()}")
+                    from rdkit.Chem import rdMolDescriptors
+                    print(f"Formulas: init {rdMolDescriptors.CalcMolFormula(init)} and opt {rdMolDescriptors.CalcMolFormula(opt)}")
+                    continue
                 if torch.isnan(values.sum()):
                     print(f"Skipping molecule {idx} due to invalid result.")
                     continue
@@ -234,10 +239,6 @@ def check_topology_wrapper(rdkit_mol):
     Returns:
         bool: True if the topology is valid, False otherwise.
     """
-    rdkit_mol = prepare_mol_for_conformer_eval(rdkit_mol)
-    if rdkit_mol is None:
-        return False
-
     adjacency_matrix = Chem.GetAdjacencyMatrix(rdkit_mol)
     coordinates = np.array(rdkit_mol.GetConformer().GetPositions().tolist()).reshape(1, -1, 3)
     numbers = np.array([atom.GetAtomicNum() for atom in rdkit_mol.GetAtoms()])
@@ -269,18 +270,6 @@ class Forces(nn.Module):
         return data
 
 
-def load_aimnet2_module(model_path, device="cpu"):
-    """Load AIMNet2, preferring direct TorchScript loading for .jpt artifacts."""
-    model_path = Path(model_path)
-    if model_path.suffix == ".jpt":
-        return torch.jit.load(str(model_path), map_location=device)
-
-    model = torch.load(str(model_path), map_location=device, weights_only=False)
-    if not isinstance(model, nn.Module):
-        raise TypeError(f"Unsupported AIMNet2 model object: {type(model)!r}")
-    return model
-
-
 class MoleculeAIMNet2Metrics:
     """
     Compute 3D metrics for molecules, including bond lengths, angles, and torsions.
@@ -288,7 +277,7 @@ class MoleculeAIMNet2Metrics:
 
     def __init__(self, model_path, batchsize, opt_metrics=False, device="cpu", opt_params=None,
                  chunked=False):
-        self.model = Forces(load_aimnet2_module(model_path, device=device)).to(device).eval()
+        self.model = Forces(torch.jit.load(model_path)).to(device).eval()
         self.opt_metrics = opt_metrics
         self.opt_params = opt_params or {}
         self.device = device
