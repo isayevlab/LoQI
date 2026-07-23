@@ -186,34 +186,57 @@ def convert_molecules_to_pyg(molecules: List[Chem.Mol],
     return pyg_molecules
 
 
-def split_qm9_dataset(pyg_molecules: List, 
-                     random_seed: int = 42) -> tuple:
+def split_qm9_dataset(pyg_molecules: List,
+                     random_seed: int = 42,
+                     train_ratio: Optional[float] = None,
+                     val_ratio: Optional[float] = None) -> tuple:
     """
-    Split QM9 dataset into train/validation/test sets using the standard QM9 split.
-    
+    Split QM9 dataset into train/validation/test sets.
+
     Args:
         pyg_molecules: List of PyTorch Geometric Data objects
         random_seed: Random seed for reproducible splits
-        
+        train_ratio: Fraction of the dataset to use for training. If given
+            (together with val_ratio), overrides the standard fixed-100k-train/
+            10%-test split; test gets the remainder (can be 0 if the ratios
+            sum to 1).
+        val_ratio: Fraction of the dataset to use for validation. Must be given
+            together with train_ratio.
+
     Returns:
         Tuple of (train_data, val_data, test_data)
     """
-    print(f"Splitting dataset using standard QM9 split...")
-    
     np.random.seed(random_seed)
     n_total = len(pyg_molecules)
-    
-    # Standard QM9 split: 100k train, 10% test, remainder validation
-    n_train = 100000
-    n_test = int(0.1 * n_total)
-    n_val = n_total - (n_train + n_test)
-    
-    if n_total < n_train:
-        print(f"Warning: Dataset size ({n_total}) is smaller than standard training size (100k)")
-        print("Using 80% for training instead...")
-        n_train = int(0.8 * n_total)
+
+    if train_ratio is not None or val_ratio is not None:
+        if train_ratio is None or val_ratio is None:
+            raise ValueError("--train_ratio and --val_ratio must both be provided together.")
+        if not (0 < train_ratio < 1) or not (0 < val_ratio < 1) or train_ratio + val_ratio > 1:
+            raise ValueError(
+                f"train_ratio ({train_ratio}) and val_ratio ({val_ratio}) must each be in "
+                "(0, 1) and sum to at most 1 (test gets the remainder, which may be 0)."
+            )
+        test_ratio = 1 - train_ratio - val_ratio
+        print(f"Splitting dataset using train_ratio={train_ratio}, val_ratio={val_ratio}, "
+              f"test_ratio={test_ratio}...")
+        n_train = int(round(train_ratio * n_total))
+        n_val = int(round(val_ratio * n_total))
+        n_test = n_total - (n_train + n_val)
+    else:
+        print(f"Splitting dataset using standard QM9 split...")
+
+        # Standard QM9 split: 100k train, 10% test, remainder validation
+        n_train = 100000
         n_test = int(0.1 * n_total)
         n_val = n_total - (n_train + n_test)
+
+        if n_total < n_train:
+            print(f"Warning: Dataset size ({n_total}) is smaller than standard training size (100k)")
+            print("Using 80% for training instead...")
+            n_train = int(0.8 * n_total)
+            n_test = int(0.1 * n_total)
+            n_val = n_total - (n_train + n_test)
     
     # Shuffle dataset indices
     indices = np.random.permutation(n_total)
@@ -316,7 +339,9 @@ def main(args: argparse.Namespace) -> None:
     # Split dataset
     train_data, val_data, test_data = split_qm9_dataset(
         pyg_molecules,
-        random_seed=args.random_seed
+        random_seed=args.random_seed,
+        train_ratio=args.train_ratio,
+        val_ratio=args.val_ratio
     )
     
     # Process and save each split
@@ -345,6 +370,7 @@ def main(args: argparse.Namespace) -> None:
     print("\n" + "=" * 50)
     print("QM9 dataset processing completed successfully!")
     print(f"Total molecules processed: {len(pyg_molecules)}")
+    print(f"Split sizes - Train: {len(train_data)}, Val: {len(val_data)}, Test: {len(test_data)}")
     print(f"All processed data saved to: {save_processed_path}")
 
 
@@ -382,7 +408,25 @@ def setup_argument_parser() -> argparse.ArgumentParser:
         default=42,
         help="Random seed for reproducible dataset splits"
     )
-    
+
+    parser.add_argument(
+        "--train_ratio",
+        type=float,
+        default=None,
+        help=(
+            "Fraction of the dataset to use for training. If set (together with "
+            "--val_ratio), overrides the standard fixed-100k-train/10%%-test split; "
+            "test gets the remainder (which may be 0 if the ratios sum to 1)."
+        )
+    )
+
+    parser.add_argument(
+        "--val_ratio",
+        type=float,
+        default=None,
+        help="Fraction of the dataset to use for validation. Must be set together with --train_ratio."
+    )
+
     return parser
 
 
