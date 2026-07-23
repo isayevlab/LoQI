@@ -499,15 +499,12 @@ def main():
         split_dataset = MoleculeDataset(root=dataset_root, processed_folder=processed_folder, split=args.split)
         subset_indices = select_subset_indices(len(split_dataset), args.max_molecules, args.subset_seed)
         data_list = []
-        print(subset_indices)
         for idx in subset_indices:
             data = split_dataset[idx]
-            print(data)
             for _ in range(args.n_confs):
                 replica = deepcopy(data)
                 replica.mol = Chem.Mol(data.mol)
                 data_list.append(replica)
-        exit()
         loader = build_sampling_loader(
             data_list=data_list,
             sample_batch_size=sample_batch_size,
