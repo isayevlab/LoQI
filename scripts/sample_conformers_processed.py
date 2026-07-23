@@ -329,6 +329,17 @@ def select_unique_with_irmsd(molecules, rthr=0.125):
         return None, None, f"iRMSD pruning failed: {exc}"
 
 
+def select_subset_indices(n, max_molecules, seed):
+    """Deterministically pick `max_molecules` indices out of range(n), reproducible via `seed`.
+
+    Used to compare checkpoints (e.g. finetuned vs. pretrained) on the identical subset.
+    """
+    if max_molecules is None or max_molecules >= n:
+        return list(range(n))
+    rng = np.random.RandomState(seed)
+    return sorted(rng.choice(n, size=max_molecules, replace=False).tolist())
+
+
 def main():
     parser = ArgumentParser()
     parser.add_argument(
@@ -351,6 +362,22 @@ def main():
         help="When --input is a processed-dataset directory, which split to load.",
     )
     parser.add_argument("--n_confs", type=int, default=1)
+    parser.add_argument(
+        "--max_molecules",
+        type=int,
+        default=None,
+        help=(
+            "If set, sample only this many molecules from the split/input (before --n_confs "
+            "replication), chosen reproducibly via --subset_seed -- e.g. to compare a "
+            "finetuned vs. pretrained checkpoint on the identical subset."
+        ),
+    )
+    parser.add_argument(
+        "--subset_seed",
+        type=int,
+        default=42,
+        help="Random seed used to select --max_molecules molecules reproducibly.",
+    )
     parser.add_argument(
         "--batch_size",
         type=int,
@@ -470,12 +497,17 @@ def main():
         dataset_root = os.path.dirname(os.path.normpath(args.input))
         processed_folder = os.path.basename(os.path.normpath(args.input))
         split_dataset = MoleculeDataset(root=dataset_root, processed_folder=processed_folder, split=args.split)
+        subset_indices = select_subset_indices(len(split_dataset), args.max_molecules, args.subset_seed)
         data_list = []
-        for data in split_dataset:
+        print(subset_indices)
+        for idx in subset_indices:
+            data = split_dataset[idx]
+            print(data)
             for _ in range(args.n_confs):
                 replica = deepcopy(data)
                 replica.mol = Chem.Mol(data.mol)
                 data_list.append(replica)
+        exit()
         loader = build_sampling_loader(
             data_list=data_list,
             sample_batch_size=sample_batch_size,
@@ -494,6 +526,8 @@ def main():
             print(f"WARNING: {err}")
         if not mols:
             raise ValueError("No valid molecules left after validation/revalidation checks.")
+        subset_indices = select_subset_indices(len(mols), args.max_molecules, args.subset_seed)
+        mols = [mols[i] for i in subset_indices]
         has_3d_input = any(mol.GetNumConformers() > 0 for mol in mols) if input_is_sdf else False
         use_3d_input = input_is_sdf and has_3d_input
         data_list = mols_to_data_list(mols, n_confs=args.n_confs, use_3d_input=use_3d_input)
