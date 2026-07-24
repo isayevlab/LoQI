@@ -544,8 +544,9 @@ def main():
     skip_eval = not args.eval
     references = [] if not skip_eval else None
     ids = []
+    smiles_list = []
     timesteps = args.n_steps
-    
+
     for batch in tqdm(loader, desc="Sampling"):
         batch = batch.to(model.device)
         sample = model.sample(batch=batch, timesteps=timesteps, pre_format=True)
@@ -555,6 +556,7 @@ def main():
         if not skip_eval:
             references.extend(batch["mol"])
         ids.extend([m.GetProp("_Name") if m.HasProp("_Name") else "NA" for m in batch["mol"]])
+        smiles_list.extend(batch["smiles"])
 
     energies = None
     if args.postprocess in {"optimization", "optimization+irmsd"}:
@@ -582,6 +584,7 @@ def main():
             raise RuntimeError(irmsd_error)
         generated = unique_mols
         ids = [ids[i] for i in selected_indices]
+        smiles_list = [smiles_list[i] for i in selected_indices]
         if references is not None:
             references = [references[i] for i in selected_indices]
         if energies is not None:
@@ -594,6 +597,7 @@ def main():
         writer = SDWriter(args.output)
         ev2kcalpermol = 23.060547830619026
         for idx, mol in enumerate(generated):
+            mol.SetProp("_Name", smiles_list[idx])
             if energies is not None:
                 mol.SetProp("Energy_kcal_mol", f"{float(energies[idx]) * ev2kcalpermol:.6f}")
             writer.write(mol)
