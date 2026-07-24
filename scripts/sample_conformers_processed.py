@@ -431,10 +431,12 @@ def main():
     parser.add_argument(
         "--atom-aware-batching",
         action=BooleanOptionalAction,
-        default=True,
+        default=False,
         help=(
-            "Enable atom-aware batching with AdaptiveBatchSampler. "
-            "Use --no-atom-aware-batching to disable."
+            "Enable atom-aware batching with AdaptiveBatchSampler. Off by default since it "
+            "draws from an unseeded global RNG (AdaptiveBatchSampler's random size anchor), "
+            "which reorders/rebuckets molecules non-reproducibly across runs even with the "
+            "same --subset_seed. Use --atom-aware-batching to re-enable it."
         ),
     )
     parser.add_argument(
