@@ -45,7 +45,6 @@ from torch_geometric.loader import DataLoader
 import torch
 import numpy as np
 from omegaconf import OmegaConf
-from copy import deepcopy
 from torch_geometric.data import Data
 
 from megalodon.models.module import Graph3DInterpolantModel
@@ -502,9 +501,10 @@ def main():
         for idx in subset_indices:
             data = split_dataset[idx]
             for _ in range(args.n_confs):
-                replica = deepcopy(data)
+                replica = data.clone()
                 replica.mol = Chem.Mol(data.mol)
                 data_list.append(replica)
+        print(f"Loaded {len(data_list)} conformer replicas from {len(subset_indices)} molecules in split '{args.split}' of processed dataset '{processed_folder}'.")
         loader = build_sampling_loader(
             data_list=data_list,
             sample_batch_size=sample_batch_size,
@@ -512,6 +512,7 @@ def main():
             shuffle=shuffle,
             target_molecule_size=target_molecule_size,
         )
+        print(f"Sampling from processed dataset '{processed_folder}' split '{args.split}' with {len(loader)} batches of size {sample_batch_size}.")
         has_3d_input = True  # processed dataset molecules always carry a reference conformer
         processed_stats_dir = f"{dataset_root}/{processed_folder}"
     else:
