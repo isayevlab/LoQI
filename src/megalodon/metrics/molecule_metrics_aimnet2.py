@@ -67,27 +67,29 @@ def collect_geometry(pairs, compute_function):
     results = []
 
     for idx, pair in enumerate(pairs):
-        # try:
-            if is_valid(pair[0]) and is_valid(pair[1]):
-                init = Chem.Mol(pair[0])
-                Chem.SanitizeMol(init)
-                opt = Chem.Mol(pair[1])
-                Chem.SanitizeMol(opt)
+        if is_valid(pair[0]) and is_valid(pair[1]):
+            init = Chem.Mol(pair[0])
+            Chem.SanitizeMol(init)
+            opt = Chem.Mol(pair[1])
+            Chem.SanitizeMol(opt)
+            name = init.GetProp("_Name") if init.HasProp("_Name") else "<unnamed>"
+            try:
                 result = compute_function((init, opt))
-                try:
-                    values = torch.cat([torch.tensor(v[0]) for v in result.values()])
-                except Exception as e:
-                    print(f"Error processing molecule {idx}: {e}")
-                    print(f"Number of atoms: init {init.GetNumAtoms()} and opt {opt.GetNumAtoms()}")
-                    from rdkit.Chem import rdMolDescriptors
-                    print(f"Formulas: init {rdMolDescriptors.CalcMolFormula(init)} and opt {rdMolDescriptors.CalcMolFormula(opt)}")
-                    continue
-                if torch.isnan(values.sum()):
-                    print(f"Skipping molecule {idx} due to invalid result.")
-                    continue
-                results.append(result)
-        # except Exception:
-        #     continue  # Skip invalid or problematic pairs
+            except Exception as e:
+                print(f"Error computing geometry for molecule {idx} ({name}): {e}")
+                continue
+            try:
+                values = torch.cat([torch.tensor(v[0]) for v in result.values()])
+            except Exception as e:
+                print(f"Error processing molecule {idx} ({name}): {e}")
+                print(f"Number of atoms: init {init.GetNumAtoms()} and opt {opt.GetNumAtoms()}")
+                from rdkit.Chem import rdMolDescriptors
+                print(f"Formulas: init {rdMolDescriptors.CalcMolFormula(init)} and opt {rdMolDescriptors.CalcMolFormula(opt)}")
+                continue
+            if torch.isnan(values.sum()):
+                print(f"Skipping molecule {idx} ({name}) due to invalid result.")
+                continue
+            results.append(result)
 
     for result in results:
         for key, (diff_list, count) in result.items():
