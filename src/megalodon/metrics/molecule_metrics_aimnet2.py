@@ -305,12 +305,17 @@ class MoleculeAIMNet2Metrics:
         self.chunked = chunked
 
     @torch.no_grad()
-    def __call__(self, molecules, reference_molecules=None, return_molecules=False):
+    def __call__(self, molecules, reference_molecules=None, return_molecules=False,
+                 return_details=False):
         """
         Compute molecular metrics.
 
         Args:
             molecules (list): List of RDKit molecule objects.
+            return_details (bool): If True, also return a dict of per-molecule values
+                (energy before/after optimization, reference energy, topology preserved),
+                aligned to and the same length as the input `molecules` list (entries for
+                invalid molecules, or fields not computed, are None).
 
         Returns:
             dict: Computed metrics.
@@ -336,6 +341,8 @@ class MoleculeAIMNet2Metrics:
             energy[idxs] = e
             max_forces[idxs] = max_f_norm
 
+        ev2kcalpermol = 23.060547830619026
+
         metrics = {
             "avg_max_forces": max_forces.mean().item(),
             "median_max_forces": torch.median(max_forces).item(),
@@ -353,28 +360,52 @@ class MoleculeAIMNet2Metrics:
                 e, f = self.calculate_energy_forces_batched(chunk)
                 ref_energy[idxs] = e
 
-            ev2kcalpermol = 23.060547830619026
             metrics = {
                 "mean_relative_energy": ((energy - ref_energy) * ev2kcalpermol).mean().item(),
                 "median_relative_energy": torch.median((energy - ref_energy) * ev2kcalpermol).item(),
             }
-            
 
+        topology_mask = None
         if self.opt_metrics:
             start_time = time.time()
-            valid_molecules, opt_molecules, res_energy = self.compute_optimized_metrics(aimnet2_chunks, aimnet2_idxs, valid_molecules, energy, metrics,
-                                           ref_energy=ref_energy)
-            
+            valid_molecules, opt_molecules, res_energy, topology_mask = self.compute_optimized_metrics(
+                aimnet2_chunks, aimnet2_idxs, valid_molecules, energy, metrics, ref_energy=ref_energy)
+
             end_time = time.time()  # End timing
             metrics["opt_total_time"] = end_time - start_time
-            
+
+        if return_details:
+            valid_orig_indices = [i for i, v in enumerate(valid) if v]
+            energy_before_opt = [None] * len(molecules)
+            reference_energy = [None] * len(molecules)
+            energy_after_opt = [None] * len(molecules)
+            topology_preserved = [None] * len(molecules)
+            for local_idx, orig_idx in enumerate(valid_orig_indices):
+                energy_before_opt[orig_idx] = energy[local_idx].item() * ev2kcalpermol
+                if ref_energy is not None:
+                    reference_energy[orig_idx] = ref_energy[local_idx].item() * ev2kcalpermol
+                if self.opt_metrics:
+                    energy_after_opt[orig_idx] = res_energy[local_idx].item() * ev2kcalpermol
+                    topology_preserved[orig_idx] = bool(topology_mask[local_idx])
+            details = {
+                "energy_before_opt": energy_before_opt,
+                "reference_energy": reference_energy,
+                "energy_after_opt": energy_after_opt,
+                "topology_preserved": topology_preserved,
+            }
+
+        output = [metrics]
         if return_molecules:
+            output.append(valid_molecules)
             if self.opt_metrics:
-                return metrics, valid_molecules, opt_molecules, res_energy
-            else:
-                return metrics, valid_molecules
-        else: 
+                output.append(opt_molecules)
+                output.append(res_energy)
+        if return_details:
+            output.append(details)
+
+        if len(output) == 1:
             return metrics
+        return tuple(output)
 
     def calculate_energy_forces_batched(self, aimnet2_batch):
         """
@@ -471,7 +502,7 @@ class MoleculeAIMNet2Metrics:
             
             metrics["opt_min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / len(valid_molecules)
             metrics["opt_better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / len(valid_molecules)
-        return valid_molecules, opt_molecules, opt_energy
+        return valid_molecules, opt_molecules, opt_energy, topology_mask
 
     @staticmethod
     def default_values():

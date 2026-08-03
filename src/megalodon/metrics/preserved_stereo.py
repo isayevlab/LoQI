@@ -44,33 +44,66 @@ def get_stereochemistry_descriptor(mol: Chem.Mol) -> Tuple[str, str, str]:
 class StereoMetrics:
     """Compute 3D stereochemistry metrics (RS Score & EZ Score) for molecules."""
 
-    def __call__(self, molecules: List[Chem.Mol], reference_molecules: List[Chem.Mol]) -> Dict[str, float]:
+    def __call__(self, molecules: List[Chem.Mol], reference_molecules: List[Chem.Mol],
+                 return_details: bool = False):
+        """
+        Args:
+            return_details: If True, also return a list of per-molecule stereocenter counts
+                (rs_correct/rs_total, ez_correct/ez_total), aligned to and the same length as
+                `molecules` (None for entries that couldn't be prepared for comparison).
+        """
         assert len(molecules) == len(reference_molecules), 'Molecule lists must have the same length.'
 
         correct_rs = 0
         total_rs = 0
         correct_ez = 0
         total_ez = 0
+        details = [] if return_details else None
 
         for mol, ref_mol in zip(molecules, reference_molecules):
             mol = prepare_mol_for_conformer_eval(mol, assign_from_3d=True)
             ref_mol = prepare_mol_for_conformer_eval(ref_mol, assign_from_3d=True)
             if mol is None or ref_mol is None:
+                if return_details:
+                    details.append(None)
                 continue
 
             sr, inv_sr, ez = get_stereochemistry_descriptor(mol)
             ref_sr, _, ref_ez = get_stereochemistry_descriptor(ref_mol)
 
+            mol_rs_correct, mol_rs_total = None, None
             if ref_sr:
                 total_rs += 1
                 if sr == ref_sr or sr == inv_sr:
                     correct_rs += 1
+                mol_rs_total = len(ref_sr)
+                if len(sr) == len(ref_sr):
+                    direct_matches = sum(1 for a, b in zip(sr, ref_sr) if a == b)
+                    mol_rs_correct = max(direct_matches, mol_rs_total - direct_matches)
+                else:
+                    mol_rs_correct = 0
 
+            mol_ez_correct, mol_ez_total = None, None
             if ref_ez:
                 total_ez += 1
                 if ez == ref_ez:
                     correct_ez += 1
+                mol_ez_total = len(ref_ez)
+                mol_ez_correct = (
+                    sum(1 for a, b in zip(ez, ref_ez) if a == b) if len(ez) == len(ref_ez) else 0
+                )
+
+            if return_details:
+                details.append({
+                    "rs_correct": mol_rs_correct,
+                    "rs_total": mol_rs_total,
+                    "ez_correct": mol_ez_correct,
+                    "ez_total": mol_ez_total,
+                })
 
         rs_score = correct_rs / total_rs if total_rs > 0 else 0.0
         ez_score = correct_ez / total_ez if total_ez > 0 else 0.0
-        return {'rs_score': rs_score, 'ez_score': ez_score}
+        metrics = {'rs_score': rs_score, 'ez_score': ez_score}
+        if return_details:
+            return metrics, details
+        return metrics

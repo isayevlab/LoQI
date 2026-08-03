@@ -17,6 +17,7 @@ Example:
         --config scripts/conf/loqi/loqi_finetune.yaml \
         --output /tmp/metrics.json
 """
+import csv
 import json
 from argparse import ArgumentParser
 from rdkit import Chem
@@ -81,6 +82,13 @@ def main():
     parser.add_argument("--reference", type=str, required=True, help="SDF of reference/ground-truth conformers.")
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--output", type=str, default=None, help="Optional path to save results (.json).")
+    parser.add_argument("--output_sdf", type=str, default=None,
+                         help="Optional path to save the AIMNet2-optimized generated structures "
+                              "(requires compute_energy_metrics and opt_metrics enabled in --config).")
+    parser.add_argument("--output_log", type=str, default=None,
+                         help="Optional path to save a per-molecule optimization log (.csv) with "
+                              "smiles, reference/pre/post-optimization energy, whether topology "
+                              "was preserved, and R/S and E/Z stereocenter correctness counts.")
     args = parser.parse_args()
 
     cfg = OmegaConf.load(args.config)
@@ -113,11 +121,37 @@ def main():
         scale_coords=cfg.evaluation.scale_coords,
         compute_stereo_metrics=True,
     )
-    results = eval_cb.evaluate_molecules(generated, reference_molecules=references, device=device)
+    results = eval_cb.evaluate_molecules(
+        generated, reference_molecules=references, device=device,
+        return_optimized_molecules=args.output_sdf is not None,
+        return_optimization_log=args.output_log is not None)
+
+    optimized_molecules = results.pop("optimized_molecules", None)
+    optimization_log = results.pop("optimization_log", None)
 
     print(f"Evaluated {len(generated)} molecule pairs.")
     print("Evaluation Results:")
     print(results)
+
+    if args.output_sdf is not None:
+        if optimized_molecules is None:
+            print(f"WARNING: --output_sdf was set but no optimized structures were produced; "
+                  f"skipping write to {args.output_sdf}.")
+        else:
+            writer = Chem.SDWriter(args.output_sdf)
+            for mol in optimized_molecules:
+                writer.write(mol)
+            writer.close()
+            print(f"Saved {len(optimized_molecules)} optimized structures to {args.output_sdf}")
+
+    if args.output_log is not None:
+        fieldnames = ["smiles", "reference_energy", "energy_before_opt", "energy_after_opt",
+                      "topology_preserved", "rs_correct", "rs_total", "ez_correct", "ez_total"]
+        with open(args.output_log, "w", newline="") as f:
+            writer = csv.DictWriter(f, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(optimization_log)
+        print(f"Saved optimization log for {len(optimization_log)} molecules to {args.output_log}")
 
     if args.output is not None:
         with open(args.output, "w") as f:

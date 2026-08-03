@@ -138,13 +138,21 @@ class ConformerEvaluationCallback(pl.Callback):
             defaults.update(MoleculeAIMNet2Metrics.default_values())
         return defaults
 
-    def evaluate_molecules(self, molecules, reference_molecules, device, return_molecules=False):
+    def evaluate_molecules(self, molecules, reference_molecules, device, return_molecules=False,
+                            return_optimized_molecules=False, return_optimization_log=False):
         """
         Evaluate generated molecules on specified metrics.
 
         Args:
             trainer: PyTorch Lightning trainer instance.
             pl_module: PyTorch Lightning module instance.
+            return_optimized_molecules (bool): If True and energy metrics with opt_metrics are
+                enabled, include the AIMNet2-optimized molecules in the results under the
+                "optimized_molecules" key.
+            return_optimization_log (bool): If True, include a per-molecule log under the
+                "optimization_log" key: a list of dicts (one per input molecule, in the same
+                order), with smiles, reference_energy, energy_before_opt, energy_after_opt,
+                topology_preserved, rs_correct/rs_total, and ez_correct/ez_total.
 
         Returns:
             Dict: Results of the evaluation.
@@ -159,6 +167,7 @@ class ConformerEvaluationCallback(pl.Callback):
             mol_3d_res = mol_3d_metrics(molecules)
             results.update(mol_3d_res)
 
+        energy_details = None
         if self.compute_energy_metrics:
             energy_metrics = MoleculeAIMNet2Metrics(
                 model_path=self.energy_metrics_args["model_path"],
@@ -166,14 +175,79 @@ class ConformerEvaluationCallback(pl.Callback):
                 opt_metrics=self.energy_metrics_args["opt_metrics"],
                 opt_params=self.energy_metrics_args["opt_params"],
                 device=device)
-            energy_res = energy_metrics(molecules, reference_molecules=reference_molecules)
+            energy_out = energy_metrics(
+                molecules, reference_molecules=reference_molecules,
+                return_molecules=return_optimized_molecules,
+                return_details=return_optimization_log)
+            energy_res = energy_out[0] if isinstance(energy_out, tuple) else energy_out
+            if return_optimized_molecules:
+                if energy_metrics.opt_metrics:
+                    results["optimized_molecules"] = energy_out[2]
+                else:
+                    print("WARNING: return_optimized_molecules=True but opt_metrics is disabled "
+                          "on the energy metrics config; no optimized structures produced.")
+            if return_optimization_log:
+                energy_details = energy_out[-1]
             results.update(energy_res)
+        else:
+            if return_optimized_molecules:
+                print("WARNING: return_optimized_molecules=True but compute_energy_metrics is "
+                      "disabled; no optimized structures produced.")
+            if return_optimization_log:
+                print("WARNING: return_optimization_log=True but compute_energy_metrics is "
+                      "disabled; energy fields will be empty in the log.")
 
+        stereo_details = None
         if self.compute_stereo_metrics:
             streo_metrics = StereoMetrics()
-            stereo_res = streo_metrics(molecules, reference_molecules)
+            if return_optimization_log:
+                stereo_res, stereo_details = streo_metrics(
+                    molecules, reference_molecules, return_details=True)
+            else:
+                stereo_res = streo_metrics(molecules, reference_molecules)
             results.update(stereo_res)
+        elif return_optimization_log:
+            print("WARNING: return_optimization_log=True but compute_stereo_metrics is "
+                  "disabled; stereo fields will be empty in the log.")
+
+        if return_optimization_log:
+            results["optimization_log"] = self._build_optimization_log(
+                molecules, energy_details, stereo_details)
+
         return results
+
+    @staticmethod
+    def _build_optimization_log(molecules, energy_details, stereo_details):
+        """Assemble the per-molecule optimization log rows (see evaluate_molecules)."""
+        log_rows = []
+        for idx, mol in enumerate(molecules):
+            try:
+                smiles = Chem.MolToSmiles(mol)
+            except Exception:
+                smiles = None
+            row = {
+                "smiles": smiles,
+                "reference_energy": None,
+                "energy_before_opt": None,
+                "energy_after_opt": None,
+                "topology_preserved": None,
+                "rs_correct": None,
+                "rs_total": None,
+                "ez_correct": None,
+                "ez_total": None,
+            }
+            if energy_details is not None:
+                row["reference_energy"] = energy_details["reference_energy"][idx]
+                row["energy_before_opt"] = energy_details["energy_before_opt"][idx]
+                row["energy_after_opt"] = energy_details["energy_after_opt"][idx]
+                row["topology_preserved"] = energy_details["topology_preserved"][idx]
+            if stereo_details is not None and stereo_details[idx] is not None:
+                row["rs_correct"] = stereo_details[idx]["rs_correct"]
+                row["rs_total"] = stereo_details[idx]["rs_total"]
+                row["ez_correct"] = stereo_details[idx]["ez_correct"]
+                row["ez_total"] = stereo_details[idx]["ez_total"]
+            log_rows.append(row)
+        return log_rows
 
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx,
             dataloader_idx=0):
