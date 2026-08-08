@@ -18,6 +18,7 @@ from torch_geometric.loader import DataLoader
 # Add src to path for imports
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT / 'src'))
+sys.path.append(str(ROOT))
 
 from megalodon.metrics.conformer_evaluation_callback import (
     write_coords_to_mol, convert_coords_to_np
@@ -30,6 +31,9 @@ from megalodon.metrics.preserved_stereo import (
     get_stereochemistry_descriptor,
     prepare_mol_for_conformer_eval,
 )
+
+
+from data_processing.utils_data import add_stereo_bonds
 
 
 def _clean_spurious_stereo(mol: Chem.Mol) -> Chem.Mol:
@@ -80,61 +84,6 @@ def render_molecule_svg(smiles: str, width: int = 900, height: int = 320) -> Opt
     drawer.DrawMolecule(mol)
     drawer.FinishDrawing()
     return drawer.GetDrawingText()
-
-
-def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, from_3D=True):
-    """Add stereochemistry edges to the molecular graph."""
-    result = []
-    if from_3D and mol.GetNumConformers() > 0:
-        Chem.AssignStereochemistryFrom3D(mol, replaceExistingTags=True)
-    else:
-        Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
-
-    for bond in mol.GetBonds():
-        stereo = bond.GetStereo()
-        if bond.GetBondType() == Chem.BondType.DOUBLE and stereo in ez_bonds:
-            idx_3, idx_4 = bond.GetStereoAtoms()
-            atom_1, atom_2 = bond.GetBeginAtom(), bond.GetEndAtom()
-            idx_1, idx_2 = atom_1.GetIdx(), atom_2.GetIdx()
-
-            idx_5 = [nbr.GetIdx() for nbr in atom_1.GetNeighbors() if nbr.GetIdx() not in {idx_2, idx_3}]
-            idx_6 = [nbr.GetIdx() for nbr in atom_2.GetNeighbors() if nbr.GetIdx() not in {idx_1, idx_4}]
-
-            inv_stereo = Chem.BondStereo.STEREOE if stereo == Chem.BondStereo.STEREOZ else Chem.BondStereo.STEREOZ
-            result.extend([(idx_3, idx_4, ez_bonds[stereo]), (idx_4, idx_3, ez_bonds[stereo])])
-
-            if idx_5:
-                result.extend([(idx_5[0], idx_4, ez_bonds[inv_stereo]), (idx_4, idx_5[0], ez_bonds[inv_stereo])])
-            if idx_6:
-                result.extend([(idx_3, idx_6[0], ez_bonds[inv_stereo]), (idx_6[0], idx_3, ez_bonds[inv_stereo])])
-            if idx_5 and idx_6:
-                result.extend([(idx_5[0], idx_6[0], ez_bonds[stereo]), (idx_6[0], idx_5[0], ez_bonds[stereo])])
-
-        if bond.GetBeginAtom().HasProp('_CIPCode'):
-            idx = bond.GetBeginAtom().GetIdx()
-            chirality = bond.GetBeginAtom().GetProp('_CIPCode')
-            neighbors = bond.GetBeginAtom().GetNeighbors()
-            if all(n.HasProp("_CIPRank") for n in neighbors):
-                sorted_neighbors = sorted(neighbors, key=lambda x: int(x.GetProp("_CIPRank")), reverse=True)
-                sorted_neighbors = [a.GetIdx() for a in sorted_neighbors]
-                a, b, c = sorted_neighbors[:3] if chirality == "R" else sorted_neighbors[:3][::-1]
-                d = sorted_neighbors[-1]
-                result.extend([
-                    (a, d, chi_bonds[0]), (b, d, chi_bonds[0]), (c, d, chi_bonds[0]),
-                    (d, a, chi_bonds[0]), (d, b, chi_bonds[0]), (d, c, chi_bonds[0]),
-                    (b, a, chi_bonds[1]), (c, b, chi_bonds[1]), (a, c, chi_bonds[1])
-                ])
-
-    if not result:
-        return edge_index, edge_attr
-    new_edge_index = torch.tensor([[i, j] for i, j, _ in result], dtype=torch.long).T
-    new_edge_attr = torch.tensor([b for _, _, b in result], dtype=torch.uint8)
-
-    if edge_index is None:
-        return new_edge_index, new_edge_attr
-    edge_index = torch.cat([edge_index, new_edge_index], dim=1)
-    edge_attr = torch.cat([edge_attr, new_edge_attr])
-    return edge_index, edge_attr
 
 
 def mol_to_torch_geometric_simple(mol, smiles):

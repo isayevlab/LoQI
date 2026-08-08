@@ -8,6 +8,11 @@ wandb==0.27.2
 pandas==2.3.3
 tqdm==4.68.1
 
+# ChEMBL3D preprocessing
+zarr==2.18.3
+numcodecs==0.13.1
+h5py==3.12.1
+
 # PyTorch
 torch==2.12.0
 
