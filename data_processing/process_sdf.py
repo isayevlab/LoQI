@@ -35,7 +35,6 @@ def read_sdf_graphs(
             continue
 
         try:
-            Chem.SanitizeMol(molecule)
             if molecule.GetNumConformers() != 1:
                 raise ValueError(
                     f"expected exactly one conformer, found {molecule.GetNumConformers()}"

@@ -166,8 +166,8 @@ or `--limit_molecules` for other bounded runs.
 
 `process_sdf.py` converts any SDF containing one 3D conformer per record to
 the same 42 train/validation/test artifacts used by `chembl3d_stereo`. It
-preserves explicit hydrogens and applies the same E/Z and tetrahedral stereo
-edge encoding as the ChEMBL3D preprocessing path.
+preserves explicit hydrogens, Kekulizes aromatic systems, and applies the same
+E/Z and tetrahedral stereo edge encoding as the ChEMBL3D preprocessing path.
 
 Run a bounded test first:
 

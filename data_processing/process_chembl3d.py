@@ -211,6 +211,9 @@ def _records_by_group(
 
 def _convert_record(topology: Chem.Mol, coords: np.ndarray, mol_id: str):
     """Convert one topology/coordinate pair using LoQI's existing helpers."""
+    topology = Chem.Mol(topology)
+    Chem.SanitizeMol(topology)
+    Chem.Kekulize(topology, clearAromaticFlags=True)
     graph = raw_to_pyg(topology, coords)
     graph.chemblid = mol_id
     graph.edge_index, graph.edge_attr = add_stereo_bonds(
