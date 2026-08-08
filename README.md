@@ -139,6 +139,12 @@ sets included in Release 2. See the
 [detailed preprocessing guide](data_processing/README.md#chembl3d-stereo-processing)
 for options and output details.
 
+For fine-tuning on another 3D molecular set, use
+[`data_processing/process_sdf.py`](data_processing/process_sdf.py) to convert
+an SDF containing one conformer per record into the same 42 standard artifacts.
+See the
+[generic SDF preprocessing guide](data_processing/README.md#generic-3d-sdf-processing).
+
 **Release 2: Processed dataset + LoQI checkpoints (diffusion + flow matching)**
 - URL: https://kilthub.cmu.edu/articles/dataset/LoQI_Scalable_Low-Energy_Molecular_Conformer_Generation_with_Quantum_Mechanical_Accuracy/31441570
 - DOI: https://doi.org/10.1184/R1/31441570
