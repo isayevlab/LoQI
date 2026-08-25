@@ -268,6 +268,60 @@ def collect_all_geometries(data_list: List[Data]) -> Tuple[Dict, Dict, Dict]:
 # PyTorch Geometric Conversion
 # ===============================
 
+def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, from_3D=True):
+    """Add stereochemistry edges to the molecular graph."""
+    result = []
+    if from_3D and mol.GetNumConformers() > 0:
+        Chem.AssignStereochemistryFrom3D(mol, replaceExistingTags=True)
+    else:
+        Chem.AssignStereochemistry(mol, cleanIt=True, force=True)
+
+    for bond in mol.GetBonds():
+        stereo = bond.GetStereo()
+        if bond.GetBondType() == Chem.BondType.DOUBLE and stereo in ez_bonds:
+            idx_3, idx_4 = bond.GetStereoAtoms()
+            atom_1, atom_2 = bond.GetBeginAtom(), bond.GetEndAtom()
+            idx_1, idx_2 = atom_1.GetIdx(), atom_2.GetIdx()
+
+            idx_5 = [nbr.GetIdx() for nbr in atom_1.GetNeighbors() if nbr.GetIdx() not in {idx_2, idx_3}]
+            idx_6 = [nbr.GetIdx() for nbr in atom_2.GetNeighbors() if nbr.GetIdx() not in {idx_1, idx_4}]
+
+            inv_stereo = Chem.BondStereo.STEREOE if stereo == Chem.BondStereo.STEREOZ else Chem.BondStereo.STEREOZ
+            result.extend([(idx_3, idx_4, ez_bonds[stereo]), (idx_4, idx_3, ez_bonds[stereo])])
+
+            if idx_5:
+                result.extend([(idx_5[0], idx_4, ez_bonds[inv_stereo]), (idx_4, idx_5[0], ez_bonds[inv_stereo])])
+            if idx_6:
+                result.extend([(idx_3, idx_6[0], ez_bonds[inv_stereo]), (idx_6[0], idx_3, ez_bonds[inv_stereo])])
+            if idx_5 and idx_6:
+                result.extend([(idx_5[0], idx_6[0], ez_bonds[stereo]), (idx_6[0], idx_5[0], ez_bonds[stereo])])
+
+        if bond.GetBeginAtom().HasProp('_CIPCode'):
+            idx = bond.GetBeginAtom().GetIdx()
+            chirality = bond.GetBeginAtom().GetProp('_CIPCode')
+            neighbors = bond.GetBeginAtom().GetNeighbors()
+            if all(n.HasProp("_CIPRank") for n in neighbors):
+                sorted_neighbors = sorted(neighbors, key=lambda x: int(x.GetProp("_CIPRank")), reverse=True)
+                sorted_neighbors = [a.GetIdx() for a in sorted_neighbors]
+                a, b, c = sorted_neighbors[:3] if chirality == "R" else sorted_neighbors[:3][::-1]
+                d = sorted_neighbors[-1]
+                result.extend([
+                    (a, d, chi_bonds[0]), (b, d, chi_bonds[0]), (c, d, chi_bonds[0]),
+                    (d, a, chi_bonds[0]), (d, b, chi_bonds[0]), (d, c, chi_bonds[0]),
+                    (b, a, chi_bonds[1]), (c, b, chi_bonds[1]), (a, c, chi_bonds[1])
+                ])
+
+    if not result:
+        return edge_index, edge_attr
+    new_edge_index = torch.tensor([[i, j] for i, j, _ in result], dtype=torch.long).T
+    new_edge_attr = torch.tensor([b for _, _, b in result], dtype=torch.uint8)
+
+    if edge_index is None:
+        return new_edge_index, new_edge_attr
+    edge_index = torch.cat([edge_index, new_edge_index], dim=1)
+    edge_attr = torch.cat([edge_attr, new_edge_attr])
+    return edge_index, edge_attr
+
 def mol_to_torch_geometric(mol: Chem.Mol, 
                           smiles: str, 
                           atom_encoder: Optional[Dict] = None) -> Data:
@@ -393,18 +447,25 @@ def compute_atom_type_counts(data_list: List[Data], num_classes: int) -> np.ndar
 
 
 def compute_edge_counts(data_list: List[Data], num_bond_types: int = 5) -> np.ndarray:
-    """Compute normalized distribution of edge types including non-edges."""
+    """Compute normalized distribution of physical edge types and non-edges.
+
+    LoQI stereochemical graphs can contain auxiliary edge classes 5--8. Those
+    edges describe E/Z and tetrahedral stereochemistry rather than physical
+    bonds, so they must not contribute to the five-class bond prior.
+    """
     print("Computing edge counts...")
     counts = np.zeros(num_bond_types)
 
     for data in data_list:
+        physical_mask = (data.edge_attr >= 1) & (data.edge_attr <= num_bond_types - 1)
+        physical_edge_attr = data.edge_attr[physical_mask]
         total_pairs = data.num_nodes * (data.num_nodes - 1)
-        num_edges = data.edge_attr.shape[0]
+        num_edges = physical_edge_attr.shape[0]
         num_non_edges = total_pairs - num_edges
         assert num_non_edges >= 0
 
         edge_types = torch.nn.functional.one_hot(
-            data.edge_attr.long() - 1, 
+            physical_edge_attr.long() - 1,
             num_classes=num_bond_types - 1
         ).sum(dim=0).numpy()
         
@@ -444,12 +505,14 @@ def compute_valency_counts(data_list: List[Data],
     valencies = {atom_type: Counter() for atom_type in atom_encoder.keys()}
 
     for data in data_list:
-        edge_attr = data.edge_attr.float()
+        physical_mask = (data.edge_attr >= 1) & (data.edge_attr <= 4)
+        edge_index = data.edge_index[:, physical_mask]
+        edge_attr = data.edge_attr[physical_mask].float()
         edge_attr[edge_attr == 4] = 1.5  # Convert aromatic bonds back to 1.5
 
         for atom_idx in range(data.num_nodes):
             # Find edges connected to this atom
-            connected_edges = edge_attr[data.edge_index[0] == atom_idx]
+            connected_edges = edge_attr[edge_index[0] == atom_idx]
             valency = connected_edges.sum().item()
             atom_type = atom_decoder[data.x[atom_idx].item()]
             valencies[atom_type][valency] += 1
@@ -603,4 +666,4 @@ def save_statistics(statistics: Dict[str, Any],
 
 def read_pickle_file(filepath: Path) -> Any:
     """Read data from pickle file."""
-    return pickle.loads(filepath.read_bytes()) 
+    return pickle.loads(filepath.read_bytes())

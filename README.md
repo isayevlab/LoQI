@@ -112,6 +112,39 @@ Training and evaluation use the **ChEMBL3D** data releases below.
 - URL: https://kilthub.cmu.edu/articles/dataset/_b_ChEMBL3D_Quantum-Accurate_3D_Conformers_for_ChEMBL_at_Scale_b_/31428449
 - DOI: https://doi.org/10.1184/R1/31428449
 
+Preprocess Release 1 with
+[`data_processing/process_chembl3d.py`](data_processing/process_chembl3d.py).
+The extracted release directory must contain `zarr_database/`, `topologies/`,
+and the bundled `scripts/sgdataset.py` loader. Start with the bounded smoke test:
+
+```bash
+python data_processing/process_chembl3d.py \
+  --dataset_dir /path/to/ChEMBL3D \
+  --save_data_folder /tmp/chembl3d_smoke \
+  --test_mode
+```
+
+Then build the complete standard train/validation/test artifact set:
+
+```bash
+python data_processing/process_chembl3d.py \
+  --dataset_dir /path/to/ChEMBL3D \
+  --save_data_folder data/chembl3d_stereo
+```
+
+The processor selects the absolute-energy minimum for each `mol_id`, encodes
+the selected geometry stereochemistry, and writes the 42 standard artifacts.
+It does not create the custom CREMP, small-molecule, or rotatable-bond test
+sets included in Release 2. See the
+[detailed preprocessing guide](data_processing/README.md#chembl3d-stereo-processing)
+for options and output details.
+
+For fine-tuning on another 3D molecular set, use
+[`data_processing/process_sdf.py`](data_processing/process_sdf.py) to convert
+an SDF containing one conformer per record into the same 42 standard artifacts.
+See the
+[generic SDF preprocessing guide](data_processing/README.md#generic-3d-sdf-processing).
+
 **Release 2: Processed dataset + LoQI checkpoints (diffusion + flow matching)**
 - URL: https://kilthub.cmu.edu/articles/dataset/LoQI_Scalable_Low-Energy_Molecular_Conformer_Generation_with_Quantum_Mechanical_Accuracy/31441570
 - DOI: https://doi.org/10.1184/R1/31441570

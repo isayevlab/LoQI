@@ -77,7 +77,7 @@ class FIRE():
         return True
 
 
-def group_opt(model, coord, numbers, charge, batchsize=None, fmax=2e-3, max_nstep=5000, device="cuda"):
+def group_opt(model, coord, numbers, charge, batchsize=None, fmax=2e-3, max_nstep=5000, device="cuda", return_runtime=False):
     # Always follow the input tensor device (CPU/CUDA) for optimization buffers.
     device = str(coord.device)
     num_converged = 0
@@ -230,4 +230,6 @@ def group_opt(model, coord, numbers, charge, batchsize=None, fmax=2e-3, max_nste
         res_energy[opt_idx] = opt_energy
         res_forces[opt_idx] = -fmax/1.73205
 
+    if return_runtime:
+        return converged, res_coord, res_energy, res_forces, nstep, runtime
     return converged, res_coord, res_energy, res_forces, nstep
