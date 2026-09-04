@@ -23,7 +23,7 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Create virtual environment
         run: |
-          uv venv --python ${{ matrix.python-version }}
+          uv venv --clear --python ${{ matrix.python-version }}
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Install CPU torch
         run: uv pip install torch --index-url https://download.pytorch.org/whl/cpu
@@ -46,7 +46,7 @@ jobs:
           python-version: "3.12"
       - name: Create virtual environment
         run: |
-          uv venv --python 3.12
+          uv venv --clear --python 3.12
           echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
       - name: Install CPU torch
         run: uv pip install torch --index-url https://download.pytorch.org/whl/cpu
