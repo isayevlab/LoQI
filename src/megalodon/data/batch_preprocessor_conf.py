@@ -3,7 +3,7 @@ import torch
 from megalodon.data.random_rotations import random_rotations
 from torch_geometric.utils import coalesce
 from torch_geometric.utils import dense_to_sparse, sort_edge_index
-from torch_scatter import scatter_mean
+from megalodon.scatter import scatter_mean
 
 
 def make_graph_fully_connected(edge_index, edge_attr, batch):

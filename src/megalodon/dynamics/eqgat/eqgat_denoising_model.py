@@ -22,7 +22,7 @@ from torch import Tensor, nn
 from torch_geometric.nn import MessagePassing, knn_graph
 from torch_geometric.nn.inits import reset
 from torch_geometric.typing import OptTensor
-from torch_scatter import scatter, scatter_mean, scatter_softmax
+from megalodon.scatter import scatter, scatter_mean, scatter_softmax
 
 from megalodon.dynamics.eqgat.eqgat_modules import (
     AdaptiveLayerNorm,

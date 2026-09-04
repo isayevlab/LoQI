@@ -22,7 +22,7 @@ import torch.nn.functional as F
 from torch import Tensor, nn
 from torch.nn.init import kaiming_uniform_, zeros_
 from torch_geometric.nn.inits import reset
-from torch_scatter import scatter_add, scatter_mean
+from megalodon.scatter import scatter_add, scatter_mean
 
 
 class DenseLayer(nn.Linear):

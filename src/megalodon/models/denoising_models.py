@@ -17,7 +17,7 @@ import random
 
 import torch
 from torch_geometric.utils import to_dense_adj
-from torch_scatter import scatter_add
+from megalodon.scatter import scatter_add
 from torch_geometric.data import Data
 
 from megalodon.dynamics.eqgat.eqgat_wrapper import EQGATWrapper

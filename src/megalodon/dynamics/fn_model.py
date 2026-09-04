@@ -22,7 +22,7 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 from torch_geometric.nn.norm import LayerNorm as BatchLayerNorm
-from torch_scatter import scatter, scatter_mean
+from megalodon.scatter import scatter, scatter_mean
 
 from megalodon.dynamics.utils import PredictionHead
 
