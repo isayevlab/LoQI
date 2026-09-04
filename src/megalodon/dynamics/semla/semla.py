@@ -9,7 +9,7 @@ import copy
 
 import torch
 import torch.nn as nn
-from torch_scatter import scatter
+from megalodon.scatter import scatter
 
 from megalodon.dynamics.semla.functional import zero_com_pyg, find_reverse_edges
 from megalodon.dynamics.semla.modules import (

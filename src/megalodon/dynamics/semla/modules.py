@@ -14,7 +14,7 @@ position 1 (matching the mega_pyg convention ``[N, 3, K]``) and lets
 import numpy as np
 import torch
 import torch.nn as nn
-from torch_scatter import scatter
+from megalodon.scatter import scatter
 from torch_geometric.utils import softmax
 
 from megalodon.dynamics.semla.functional import zero_com_pyg

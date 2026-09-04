@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 from omegaconf import OmegaConf
-from torch_scatter import scatter
+from megalodon.scatter import scatter
 
 from megalodon.dynamics.semla.functional import zero_com_pyg
 from megalodon.dynamics.semla.semla import EquiInvDynamics
