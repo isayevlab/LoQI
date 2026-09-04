@@ -1,39 +1,84 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
 
 [project]
-name = "megalodon"
+name = "loqi"
+version = "0.1.0"
+description = "LoQI: scalable low-energy molecular conformer generation with quantum mechanical accuracy"
 readme = "README.md"
-description = "Megalodon: Applications of Modular Co-Design for De Novo 3D Molecule Generation"
-authors = [{ name = "NVIDIA", email = "bionemofeedback@nvidia.com" }]
-requires-python = ">=3.10"
-license = { file = "LICENSE/license_code.txt" }
-dynamic = ["version"]
+requires-python = ">=3.11"
+# LoQI code is MIT (LICENSE.md); the vendored NVIDIA Megalodon code under src/megalodon is
+# Apache-2.0 (megalodon_licence/license_code.txt, third-party notices in megalodon_licence/third_party.txt).
+license = "MIT"
+license-files = ["LICENSE.md", "megalodon_licence/*.txt"]
+authors = [{ name = "Filipp Nikitin" }]
+keywords = ["conformer generation", "diffusion model", "cheminformatics", "rdkit", "pytorch geometric"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+# Inference dependencies only. No compiled PyTorch Geometric extensions (torch_scatter,
+# torch_sparse, pyg_lib) are needed: megalodon.scatter uses torch_geometric's pure-torch fallbacks.
 dependencies = [
-    # external
-    'torch==2.12.0',
-    'torch_geometric==2.8.0',
-    'torch-sparse==0.6.18',
-    'torch-scatter==2.1.2',
-    'hydra-core==1.3.2',
-    'omegaconf==2.3.0',
-    'rdkit==2026.3.3',
-    'lightning==2.6.5',
-    'einops==0.8.2',
-    'wandb==0.27.2',
-    'zarr==2.18.3',
-    'numcodecs==0.13.1',
-    'h5py==3.12.1',
-    'pandas==2.3.3',
+    "torch>=2.8",
+    "torch_geometric>=2.6",
+    "rdkit>=2025.3",
+    "lightning>=2.4",
+    "omegaconf>=2.3",
+    "einops>=0.8",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "tqdm>=4.66",
 ]
 
+[project.optional-dependencies]
+# Training and dataset preprocessing (scripts/train.py, data_processing/).
+train = ["hydra-core>=1.3", "wandb", "zarr>=2.18,<3", "numcodecs", "h5py", "pandas"]
+# AIMNet2 neural network potential for energy evaluation / geometry refinement.
+aimnet = ["aimnet>=0.2"]
+dev = ["pytest", "ruff"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["*"]
-namespaces = true
+[project.scripts]
+loqi = "loqi.cli:main"
 
+[project.urls]
+Homepage = "https://github.com/isayevlab/LoQI"
+Repository = "https://github.com/isayevlab/LoQI"
+Checkpoints = "https://doi.org/10.1184/R1/31441570"
 
-[tool.setuptools.dynamic]
-version = { file = "VERSION" }
+[tool.hatch.build.targets.wheel]
+packages = ["src/megalodon", "src/loqi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Slow tests need the released checkpoint (~360 MB); run them explicitly with `pytest -m slow`.
+addopts = "-m 'not slow'"
+markers = ["slow: end-to-end tests that load the LoQI checkpoint"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+# The upstream Megalodon modules and the research scripts are kept as-is; only the
+# packaging additions (src/loqi, src/megalodon/scatter.py, tests, sample_conformers.py) are linted.
+extend-exclude = [
+    "src/megalodon/data",
+    "src/megalodon/dynamics",
+    "src/megalodon/inference",
+    "src/megalodon/interpolant",
+    "src/megalodon/metrics",
+    "src/megalodon/models",
+    "scripts/sample.py",
+    "scripts/train.py",
+    "scripts/performance_test.py",
+    "scripts/loqi_inference_shim.py",
+    "data_processing",
+    "app",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]

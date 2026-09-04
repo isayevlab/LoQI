@@ -55,8 +55,6 @@ We then developed **LoQI** (Low-energy QM Informed conformer generative model), 
 
 ## Setup
 
-Installation will usually take up to 20 minutes.
-
 ### System and Hardware Requirements
 
 - OS tested by authors:
@@ -78,31 +76,35 @@ OOM mitigation for larger molecules:
 - reduce inference batch size (`--batch_size` in sampling, or `data.inference_batch_size` in config)
 - if using evaluation/optimization, also reduce optimization batch size (`evaluation.energy_metrics_args.batchsize`)
 
-### Prerequisites
+### Installation
 
-- Python 3.10+
-- CUDA-compatible GPU (recommended for training)
-- [Conda](https://docs.conda.io/) or [Mamba](https://mamba.readthedocs.io/) (recommended)
-
-### Environment Setup
+LoQI is a regular Python package (distribution `loqi`, import packages `loqi` and `megalodon`).
+It needs Python 3.11+ and PyTorch >= 2.8; no compiled PyTorch Geometric extensions
+(`torch_scatter`, `torch_sparse`, `pyg_lib`) are required. Install from GitHub with uv or pip
+(publication on PyPI is a later step):
 
 ```bash
-# Clone the repository
-git clone https://github.com/isayevlab/LoQI.git
-cd LoQI
-
-# Create and activate conda environment
-conda create -n loqi python=3.10 -y
-conda activate loqi
-
-# Install core dependencies
-pip install -r requirements.txt
-
-# Install this package in editable mode (adds src to PYTHONPATH)
-pip install -e .
+uv pip install "loqi @ git+https://github.com/isayevlab/LoQI"
+# or
+pip install "loqi @ git+https://github.com/isayevlab/LoQI"
 ```
 
-If you prefer a fully conda-based setup (recommended for RDKit), you can install RDKit via conda-forge before running `pip install -r requirements.txt`.
+For a CUDA build of PyTorch install `torch` first from the matching PyTorch index, e.g.
+`pip install torch --index-url https://download.pytorch.org/whl/cu128`, then install `loqi`.
+
+Development install from a clone:
+
+```bash
+git clone https://github.com/isayevlab/LoQI.git
+cd LoQI
+uv venv && source .venv/bin/activate
+uv pip install -e ".[dev]"     # inference dependencies + pytest and ruff
+uv pip install -e ".[train]"   # adds hydra-core, wandb, zarr, h5py, pandas for training and preprocessing
+```
+
+Extras: `train` (training and dataset preprocessing), `aimnet` (the `aimnet` package for the
+AIMNet2 potential), `dev` (pytest, ruff). `requirements.txt` mirrors the inference floors for
+tools that consume requirements files.
 
 ### Data Setup
 
