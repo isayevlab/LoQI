@@ -199,7 +199,7 @@ def main(cfg: DictConfig) -> None:
     train_loader = datamodule.train_dataloader()
     val_loader = datamodule.val_dataloader()
     trainer.fit(model=pl_module, train_dataloaders=train_loader, val_dataloaders=val_loader,
-                ckpt_path=ckpt)
+                ckpt_path=ckpt, weights_only=False)
 
 
 if __name__ == "__main__":

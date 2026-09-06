@@ -476,6 +476,7 @@ def main():
     target_molecule_size = int(args.target_molecule_size)
     model = Graph3DInterpolantModel.load_from_checkpoint(
         args.ckpt,
+        weights_only=False,
         loss_params=cfg.loss,
         interpolant_params=cfg.interpolant,
         sampling_params=cfg.sample,

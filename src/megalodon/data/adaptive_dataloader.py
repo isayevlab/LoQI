@@ -84,6 +84,13 @@ class AdaptiveBatchSampler(DynamicBatchSampler):
             )
         self.reference_size = reference_size
 
+        # `len(dataset)` batches would only be correct if every batch held exactly one
+        # graph. Batches actually hold ~reference_batch_size graphs each, so the real
+        # number of batches per epoch is far smaller. Trainers (e.g. PyTorch Lightning)
+        # use `len(sampler)` to schedule epoch-based validation, so an inflated count
+        # here means validation never fires. Do one dry run to get the true count.
+        self._length = self.num_steps if self.num_steps is not None else sum(1 for _ in self)
+
     def __iter__(self) -> Iterator[List[int]]:
         """Generates batches of indices for the dataset.
 
@@ -161,10 +168,11 @@ class AdaptiveBatchSampler(DynamicBatchSampler):
                 num_steps += 1
 
     def __len__(self):
-        if self.num_steps is not None:
-            return self.num_steps
-        else:
-            return len(self.dataset)
+        # if self.num_steps is not None:
+        #     return self.num_steps
+        # else:
+        #     return len(self.dataset)
+        return self._length
 
 
 def test_adaptive_data_loader():
