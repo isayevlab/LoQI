@@ -1,4 +1,4 @@
-"""Command line interface: ``loqi sample`` and ``loqi download``."""
+"""Commands for checkpoint downloads and SDF generation."""
 
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _read_smiles_file(path: Path) -> list[str]:
+def _load_smiles_file(path: Path) -> list[str]:
     smiles = []
     with open(path) as fh:
         for line in fh:
@@ -57,7 +57,7 @@ def _read_smiles_file(path: Path) -> list[str]:
     return smiles
 
 
-def _run_sample(args: argparse.Namespace) -> int:
+def _sample_to_sdf(args: argparse.Namespace) -> int:
     from rdkit import Chem
 
     from loqi.api import generate_conformers, load_model
@@ -65,7 +65,7 @@ def _run_sample(args: argparse.Namespace) -> int:
 
     smiles = list(args.smiles)
     if args.input is not None:
-        smiles.extend(_read_smiles_file(args.input))
+        smiles.extend(_load_smiles_file(args.input))
     if not smiles:
         print("error: provide at least one --smiles or an --input file", file=sys.stderr)
         return 2
@@ -113,7 +113,7 @@ def _run_sample(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_download(args: argparse.Namespace) -> int:
+def _download_checkpoint(args: argparse.Namespace) -> int:
     if args.model not in MODELS:
         print(f"error: unknown model {args.model!r}; choose from {', '.join(MODELS)}", file=sys.stderr)
         return 2
@@ -124,10 +124,10 @@ def _run_download(args: argparse.Namespace) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "sample":
-        return _run_sample(args)
+        return _sample_to_sdf(args)
     if args.command == "download":
-        return _run_download(args)
-    return 2  # pragma: no cover - argparse enforces the subcommand
+        return _download_checkpoint(args)
+    return 2
 
 
 if __name__ == "__main__":

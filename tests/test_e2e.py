@@ -1,8 +1,4 @@
-"""End-to-end conformer generation with the released ``loqi`` checkpoint (CPU).
-
-Runs only with ``pytest -m slow`` and only when a verified checkpoint is already in the cache
-(``$LOQI_CACHE_DIR`` or ``~/.cache/loqi``; ``loqi download`` puts it there).
-"""
+"""CPU sampling tests using a verified checkpoint from the local cache."""
 
 import time
 

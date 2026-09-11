@@ -1,12 +1,3 @@
-# Inference requirements (mirrors the floors in pyproject.toml; `pip install .` is the
-# preferred route, this file is kept for environments that pin from requirements files).
-#
-# No compiled PyTorch Geometric extensions (pyg_lib, torch_scatter, torch_sparse) are needed:
-# megalodon.scatter uses torch_geometric's pure-torch fallbacks.
-#
-# For a CUDA build of torch, install it first from the matching PyTorch index, e.g.
-#   pip install torch --index-url https://download.pytorch.org/whl/cu128
-# and then `pip install -r requirements.txt`.
 torch>=2.8
 torch_geometric>=2.6
 rdkit>=2025.3
@@ -16,6 +7,3 @@ einops>=0.8
 numpy>=1.26
 scipy>=1.11
 tqdm>=4.66
-
-# Training / preprocessing extras: pip install ".[train]"
-#   hydra-core>=1.3 wandb zarr>=2.18,<3 numcodecs h5py pandas

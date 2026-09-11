@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: "0 6 * * 1"  # weekly, Monday 06:00 UTC
+    - cron: "0 6 * * 1"
   workflow_dispatch:
 
 jobs:
@@ -35,7 +35,6 @@ jobs:
         run: pytest -m "not slow"
 
   slow:
-    # End-to-end sampling with the released checkpoint; weekly and on demand.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 60
@@ -56,7 +55,6 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/loqi
-          # sha256 of loqi.ckpt from loqi.registry.MODELS; bump when the registry entry changes.
           key: loqi-ckpt-5ebf59836216a4249f5d856c6f3c750d86f9651acfb8745640f13ffaaeb0c007
       - name: Download checkpoint (verified, skipped when cached)
         run: loqi download --model loqi

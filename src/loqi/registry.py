@@ -1,4 +1,4 @@
-"""Registry of released LoQI checkpoints and a small verified download cache."""
+"""Released checkpoints and verified local caching."""
 
 from __future__ import annotations
 
@@ -12,10 +12,6 @@ from pathlib import Path
 
 from tqdm import tqdm
 
-# The checkpoints are the files published with the KiltHub record
-# "LoQI: Scalable Low-Energy Molecular Conformer Generation with Quantum Mechanical Accuracy",
-# https://doi.org/10.1184/R1/31441570 (MIT license). The URLs are the record's figshare
-# file downloads for loqi.ckpt and loqi_flow.ckpt.
 KILTHUB_DOI = "10.1184/R1/31441570"
 
 ENV_CACHE_DIR = "LOQI_CACHE_DIR"
@@ -24,7 +20,7 @@ _CHUNK_SIZE = 1 << 20
 
 @dataclass(frozen=True)
 class ModelEntry:
-    """A downloadable checkpoint together with the bundled inference config that matches it."""
+    """Checkpoint URL, expected digest, and matching configuration."""
 
     url: str
     sha256: str
@@ -46,7 +42,7 @@ MODELS: dict[str, ModelEntry] = {
 
 
 def default_cache_dir() -> Path:
-    """Checkpoint cache directory: ``$LOQI_CACHE_DIR`` if set, else ``~/.cache/loqi``."""
+    """Use ``LOQI_CACHE_DIR`` or the default ``~/.cache/loqi`` directory."""
     env = os.environ.get(ENV_CACHE_DIR)
     return Path(env).expanduser() if env else Path.home() / ".cache" / "loqi"
 
@@ -60,10 +56,9 @@ def sha256sum(path: str | Path) -> str:
 
 
 def download_file(url: str, dest: str | Path, *, sha256: str | None = None, progress: bool = True) -> Path:
-    """Stream ``url`` to ``dest``, verifying the SHA-256 digest before the file is moved into place.
+    """Download to a temporary file, verify its digest, then replace the destination.
 
-    The download goes to a temporary file in the destination directory and is renamed atomically,
-    so an interrupted or corrupted download never leaves a partial file at ``dest``.
+    Remove the temporary file if the download or verification fails.
     """
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
@@ -99,11 +94,9 @@ def download_file(url: str, dest: str | Path, *, sha256: str | None = None, prog
 def checkpoint_path(
     name_or_path: str | Path = "loqi", cache_dir: str | Path | None = None, *, progress: bool = True
 ) -> Path:
-    """Return a local path to a checkpoint, downloading a registered model into the cache if needed.
+    """Resolve a local checkpoint path or cache a registered model.
 
-    ``name_or_path`` is either a key of :data:`MODELS` or a path to an existing checkpoint file.
-    Registered models are stored as ``<cache_dir>/<name>.ckpt``; an existing file is re-used only if
-    its SHA-256 digest matches the registry, otherwise it is downloaded again.
+    Reuse cached files only when their SHA-256 digest matches the registry.
     """
     name = str(name_or_path)
     if name in MODELS:

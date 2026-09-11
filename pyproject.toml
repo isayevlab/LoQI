@@ -8,8 +8,6 @@ version = "0.1.0"
 description = "LoQI: scalable low-energy molecular conformer generation with quantum mechanical accuracy"
 readme = "README.md"
 requires-python = ">=3.11"
-# LoQI code is MIT (LICENSE.md); the vendored NVIDIA Megalodon code under src/megalodon is
-# Apache-2.0 (megalodon_licence/license_code.txt, third-party notices in megalodon_licence/third_party.txt).
 license = "MIT"
 license-files = ["LICENSE.md", "megalodon_licence/*.txt"]
 authors = [{ name = "Filipp Nikitin" }]
@@ -22,8 +20,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
-# Inference dependencies only. No compiled PyTorch Geometric extensions (torch_scatter,
-# torch_sparse, pyg_lib) are needed: megalodon.scatter uses torch_geometric's pure-torch fallbacks.
 dependencies = [
     "torch>=2.8",
     "torch_geometric>=2.6",
@@ -37,9 +33,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Training and dataset preprocessing (scripts/train.py, data_processing/).
 train = ["hydra-core>=1.3", "wandb", "zarr>=2.18,<3", "numcodecs", "h5py", "pandas"]
-# AIMNet2 neural network potential for energy evaluation / geometry refinement.
 aimnet = ["aimnet>=0.2"]
 dev = ["pytest", "ruff"]
 
@@ -56,15 +50,12 @@ packages = ["src/megalodon", "src/loqi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# Slow tests need the released checkpoint (~360 MB); run them explicitly with `pytest -m slow`.
 addopts = "-m 'not slow'"
 markers = ["slow: end-to-end tests that load the LoQI checkpoint"]
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-# The upstream Megalodon modules and the research scripts are kept as-is; only the
-# packaging additions (src/loqi, src/megalodon/scatter.py, tests, sample_conformers.py) are linted.
 extend-exclude = [
     "src/megalodon/data",
     "src/megalodon/dynamics",

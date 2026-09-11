@@ -1,4 +1,4 @@
-"""LoQI: low-energy, stereochemistry-aware molecular conformer generation."""
+"""Molecular conformer generation with LoQI."""
 
 from importlib.metadata import PackageNotFoundError, version
 
@@ -7,7 +7,7 @@ from loqi.registry import MODELS, ModelEntry, checkpoint_path
 
 try:
     __version__ = version("loqi")
-except PackageNotFoundError:  # running from a source tree without an installed distribution
+except PackageNotFoundError:
     __version__ = "0.0.0"
 
 __all__ = [

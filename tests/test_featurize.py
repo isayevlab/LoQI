@@ -1,4 +1,4 @@
-"""SMILES validation, hydrogen handling and graph featurisation."""
+"""Molecule validation and graph conversion tests."""
 
 import numpy as np
 import pytest
@@ -67,7 +67,7 @@ def test_mol_to_data_builds_graph_with_zero_coordinates():
     assert data.x.dtype == torch.uint8
     assert data.x.shape == (9,)
     assert torch.equal(data.pos, torch.zeros(9, 3))
-    assert data.edge_index.shape == (2, 16)  # 8 bonds, both directions
+    assert data.edge_index.shape == (2, 16)
     assert data.edge_attr.dtype == torch.uint8
     assert torch.equal(data.edge_attr, torch.ones(16, dtype=torch.uint8))
     assert torch.equal(data.charges, torch.zeros(9, dtype=torch.int8))
@@ -115,7 +115,7 @@ def test_mols_to_data_list_replicates_and_tags_source_molecule():
     data_list = mols_to_data_list(mols, 3)
     assert len(data_list) == 6
     assert [d.mol_idx for d in data_list] == [0, 0, 0, 1, 1, 1]
-    assert all(d.mol is not mols[d.mol_idx] for d in data_list)  # featurisation works on copies
+    assert all(d.mol is not mols[d.mol_idx] for d in data_list)
     assert [d.num_nodes for d in data_list] == [9, 9, 9, 21, 21, 21]
 
 
@@ -139,7 +139,7 @@ def test_conformers_to_mol_sets_coordinates_and_ids():
     assert out.GetNumConformers() == 2
     assert [c.GetId() for c in out.GetConformers()] == [0, 1]
     assert np.allclose(out.GetConformer(1).GetPositions(), 1.0)
-    assert mol.GetNumConformers() == 0  # the template is not modified
+    assert mol.GetNumConformers() == 0
     with pytest.raises(ValueError, match="shape"):
         conformers_to_mol(mol, [np.zeros((3, 3))])
 

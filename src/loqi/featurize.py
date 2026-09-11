@@ -1,8 +1,4 @@
-"""Molecule validation and graph featurisation for LoQI inference.
-
-Ported from ``scripts/sample_conformers.py`` so that the script, the CLI and the Python API
-share one implementation.
-"""
+"""Molecule validation, graph construction, and conformer conversion."""
 
 from __future__ import annotations
 
@@ -21,7 +17,6 @@ from megalodon.data.adaptive_dataloader import AdaptiveBatchSampler
 from megalodon.inference.validation import SUPPORTED_ELEMENTS, validate_rdkit_mol, validate_smiles
 from megalodon.metrics.conformer_evaluation_callback import full_atom_encoder
 
-# Edge types used for the stereochemistry-derived graph edges (see add_stereo_bonds).
 CHIRAL_EDGE_TYPES = (7, 8)
 EZ_EDGE_TYPES = {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6}
 
@@ -42,10 +37,9 @@ __all__ = [
 
 @contextmanager
 def legacy_stereo_perception(enabled: bool = True) -> Iterator[None]:
-    """Temporarily select RDKit's legacy stereo perception.
+    """Use the RDKit stereo perception expected by the checkpoints.
 
-    The training data and the original sampling script used the legacy CIP-based perception, so
-    featurisation runs under the same setting; the previous value is restored on exit.
+    Restore the previous setting when the context exits.
     """
     previous = Chem.GetUseLegacyStereoPerception()
     Chem.SetUseLegacyStereoPerception(enabled)
@@ -56,7 +50,7 @@ def legacy_stereo_perception(enabled: bool = True) -> Iterator[None]:
 
 
 def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, from_3D=True):
-    """Append stereochemistry-derived edges (R/S and E/Z) to a molecular graph."""
+    """Add graph edges encoding tetrahedral and double-bond stereochemistry."""
     result = []
     if from_3D and mol.GetNumConformers() > 0:
         Chem.AssignStereochemistryFrom3D(mol, replaceExistingTags=True)
@@ -118,10 +112,10 @@ def add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index=None, edge_attr=None, 
 
 
 def mol_to_data(mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_stereo_bonds: bool = True) -> Data:
-    """Convert an RDKit molecule (with explicit hydrogens) into the graph the model consumes.
+    """Build an inference graph from an RDKit molecule with explicit hydrogens.
 
-    ``mol`` is sanitised and kekulised in place. Coordinates are taken from the first conformer
-    when ``use_3d_input`` is set, otherwise they are zero-initialised (the model samples them).
+    Sanitize and kekulize the molecule in place. Use its first conformer's coordinates
+    when ``use_3d_input=True``; otherwise initialize positions to zero.
     """
     Chem.SanitizeMol(mol)
     Chem.Kekulize(mol, clearAromaticFlags=True)
@@ -159,10 +153,9 @@ def mol_to_data(mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_s
 def mols_to_data_list(
     mols: Sequence[Chem.Mol], n_confs: int = 1, *, use_3d_input: bool = False, use_stereo_bonds: bool = True
 ) -> list[Data]:
-    """Replicate each molecule ``n_confs`` times as :class:`Data` objects.
+    """Create ``n_confs`` graph copies per molecule.
 
-    Every replica carries ``mol_idx``, the position of its source molecule in ``mols``, so that
-    sampled coordinates can be regrouped after (possibly reordering) batching.
+    Each copy stores its source index in ``mol_idx`` for regrouping after batching.
     """
     data_list = []
     for mol_idx, mol in enumerate(mols):
@@ -178,8 +171,8 @@ def mols_to_data_list(
     return data_list
 
 
-def _validate_smiles_allow_disconnected(smiles: str, add_hs: bool):
-    """``validate_smiles`` with a permissive fallback for disconnected systems (e.g. dimers)."""
+def _parse_supported_smiles(smiles: str, add_hs: bool):
+    """Validate SMILES while allowing disconnected molecules with a warning."""
     mol, canonical, err = validate_smiles(smiles, add_hs=add_hs)
     if err is None:
         return mol, canonical, None, None
@@ -210,14 +203,12 @@ def _validate_smiles_allow_disconnected(smiles: str, add_hs: bool):
 
 
 def prepare_molecule(smiles: str, add_hs: bool = True) -> tuple[Chem.Mol, str]:
-    """Validate a SMILES string and return ``(molecule, canonical_smiles)``.
+    """Return a validated molecule and its canonical SMILES.
 
-    The SMILES is parsed, canonicalised and re-parsed, hydrogens are added when ``add_hs`` is set,
-    and the element set and radical count are checked against what the models support.
-    Disconnected systems are accepted with a :class:`UserWarning`. Raises :class:`ValueError`
-    for anything the model cannot handle.
+    Add hydrogens when requested. Unsupported elements, radicals, and invalid SMILES
+    raise ``ValueError``; disconnected molecules emit ``UserWarning``.
     """
-    mol, canonical, err, warning = _validate_smiles_allow_disconnected(smiles, add_hs)
+    mol, canonical, err, warning = _parse_supported_smiles(smiles, add_hs)
     if err is not None:
         raise ValueError(f"Invalid SMILES {smiles!r}: {err}")
     if warning is not None:
@@ -226,10 +217,10 @@ def prepare_molecule(smiles: str, add_hs: bool = True) -> tuple[Chem.Mol, str]:
 
 
 def load_molecules(input_path_or_smiles: str, add_hs: bool = True) -> tuple[list[Chem.Mol], list[str]]:
-    """Load molecules from a SMILES string, a ``.smi``/``.smiles`` file or an ``.sdf`` file.
+    """Read a SMILES string, SMILES file, or SDF file.
 
-    Returns the validated molecules and a list of human-readable messages for skipped entries.
-    A single invalid SMILES string raises :class:`ValueError`.
+    Return molecules and messages for skipped file entries. A single invalid SMILES
+    string raises ``ValueError``.
     """
     errors: list[str] = []
     if os.path.isfile(input_path_or_smiles):
@@ -250,7 +241,7 @@ def load_molecules(input_path_or_smiles: str, add_hs: bool = True) -> tuple[list
                 smiles_list = [line.strip().split()[0] for line in fh if line.strip()]
             mols = []
             for i, smi in enumerate(smiles_list):
-                mol, _, err, warning = _validate_smiles_allow_disconnected(smi, add_hs=add_hs)
+                mol, _, err, warning = _parse_supported_smiles(smi, add_hs=add_hs)
                 if err is not None:
                     errors.append(f"SMILES line {i + 1}: {err}")
                     continue
@@ -273,11 +264,10 @@ def build_sampling_loader(
     shuffle: bool = False,
     target_molecule_size: int = 50,
 ) -> DataLoader:
-    """Build the sampling data loader.
+    """Create a fixed-size or adaptive graph loader.
 
-    With ``atom_aware_batching`` the :class:`AdaptiveBatchSampler` scales the number of molecules
-    per batch by ``(target_molecule_size / n_atoms) ** 2`` relative to ``batch_size``, which keeps
-    the number of edges of the fully connected graphs roughly constant across molecule sizes.
+    Adaptive batches scale by ``(target_molecule_size / n_atoms)**2`` relative to
+    ``batch_size`` to limit variation in the number of graph edges.
     """
     if atom_aware_batching:
         sampler = AdaptiveBatchSampler(
@@ -291,7 +281,7 @@ def build_sampling_loader(
 
 
 def conformers_to_mol(mol: Chem.Mol, coords_list: Sequence[np.ndarray]) -> Chem.Mol:
-    """Return a copy of ``mol`` whose conformers are the given ``(n_atoms, 3)`` coordinate arrays."""
+    """Copy a molecule and replace its conformers with the supplied coordinate arrays."""
     out = Chem.Mol(mol)
     out.RemoveAllConformers()
     n_atoms = out.GetNumAtoms()

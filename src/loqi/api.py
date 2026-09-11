@@ -1,4 +1,4 @@
-"""Public inference API: load a released LoQI checkpoint and generate conformers for SMILES."""
+"""Checkpoint loading and conformer sampling."""
 
 from __future__ import annotations
 
@@ -22,7 +22,6 @@ from megalodon.data.batch_preprocessor import BatchPreProcessor
 from megalodon.metrics.conformer_evaluation_callback import convert_coords_to_np
 from megalodon.models.module import Graph3DInterpolantModel
 
-# Reference molecule size (atoms) of the atom-aware batch sampler; see featurize.build_sampling_loader.
 TARGET_MOLECULE_SIZE = 50
 
 __all__ = [
@@ -38,15 +37,14 @@ __all__ = [
 
 
 def bundled_config_path(name: str) -> Path:
-    """Path of an inference config shipped in ``loqi/configs`` (``loqi.yaml`` or ``loqi_flow.yaml``)."""
+    """Locate a YAML configuration in the installed package."""
     return Path(str(files("loqi").joinpath("configs", name)))
 
 
 def load_config(name_or_path: str | Path) -> DictConfig:
-    """Load a bundled config by name or any config YAML by path.
+    """Read a bundled configuration or a YAML file.
 
-    ``sample.node_distribution`` is always set to ``None``: the node-count prior is only used for
-    de novo sampling, and conformer generation always supplies the molecular graph.
+    Disable the node-count prior because conformer sampling supplies a molecular graph.
     """
     path = Path(name_or_path)
     if not path.is_file():
@@ -60,7 +58,7 @@ def load_config(name_or_path: str | Path) -> DictConfig:
 
 
 def resolve_device(device: str | torch.device | None = None) -> torch.device:
-    """``device`` as a :class:`torch.device`; ``None`` selects CUDA when available, else CPU."""
+    """Use the requested device, or select CUDA when available and CPU otherwise."""
     if device is None:
         return torch.device("cuda" if torch.cuda.is_available() else "cpu")
     return torch.device(device)
@@ -68,7 +66,7 @@ def resolve_device(device: str | torch.device | None = None) -> torch.device:
 
 @dataclass
 class LoadedModel:
-    """A LoQI model ready for sampling, together with the config it was loaded with."""
+    """A loaded model with its configuration, checkpoint path, and device."""
 
     model: Graph3DInterpolantModel
     config: DictConfig
@@ -78,12 +76,12 @@ class LoadedModel:
 
     @property
     def default_steps(self) -> int:
-        """Sampling steps the model was trained with (``interpolant.timesteps``)."""
+        """Return the configured sampling step count."""
         return int(self.config.interpolant.timesteps)
 
     @property
     def default_batch_size(self) -> int:
-        """Reference batch size (molecules of ``TARGET_MOLECULE_SIZE`` atoms) from the config."""
+        """Return the configured batch size at the reference molecule size."""
         data = self.config.data
         return int(data.get("inference_batch_size", data.get("batch_size", 32)))
 
@@ -96,10 +94,10 @@ def load_model(
     config: str | Path | None = None,
     progress: bool = True,
 ) -> LoadedModel:
-    """Load a registered model (downloading it into the cache on first use) or a local checkpoint.
+    """Load a registered model or a local checkpoint for inference.
 
-    ``config`` is a bundled config name or a YAML path. It defaults to the registry entry's config;
-    for local checkpoints whose file stem is not a registry name it must be given explicitly.
+    Registered checkpoints are downloaded and verified on first use. ``config`` may
+    be a bundled name or a YAML path; it is required for unregistered checkpoint names.
     """
     name = str(name_or_path)
     ckpt = checkpoint_path(name, cache_dir=cache_dir, progress=progress)
@@ -121,8 +119,6 @@ def load_model(
         "sampling_params": cfg.sample,
         "batch_preprocessor": preprocessor,
     }
-    # The checkpoint pickles omegaconf and megalodon objects. Lightning >= 2.5.5 exposes
-    # torch.load's ``weights_only``; older versions load with weights_only=False internally.
     if "weights_only" in inspect.signature(Graph3DInterpolantModel.load_from_checkpoint).parameters:
         kwargs["weights_only"] = False
     model = Graph3DInterpolantModel.load_from_checkpoint(str(ckpt), map_location=dev, **kwargs)
@@ -132,7 +128,7 @@ def load_model(
 
 
 def seed_everything(seed: int) -> None:
-    """Seed Python, NumPy and torch (CPU and all CUDA devices)."""
+    """Set the Python, NumPy, and PyTorch random seeds."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -141,10 +137,9 @@ def seed_everything(seed: int) -> None:
 def iter_sampled_batches(
     loaded: LoadedModel, loader: DataLoader, *, steps: int | None = None
 ) -> Iterator[tuple[Batch, list[np.ndarray]]]:
-    """Run the sampler over ``loader`` and yield ``(batch, coordinates)`` per batch.
+    """Yield each graph batch and its sampled coordinate arrays in batch order.
 
-    ``coordinates`` holds one ``(n_atoms, 3)`` array per molecule in the batch, in batch order.
-    ``steps`` defaults to the number of steps the model was trained with.
+    Each molecule has an ``(n_atoms, 3)`` array. ``steps`` defaults to the model configuration.
     """
     steps = loaded.default_steps if steps is None else int(steps)
     model = loaded.model
@@ -165,22 +160,19 @@ def generate_conformers(
     add_hs: bool = True,
     batch_atoms: int | None = None,
 ) -> list[Chem.Mol]:
-    """Generate conformers for one SMILES string or a sequence of SMILES strings.
+    """Sample conformers and return one RDKit molecule per input SMILES, in input order.
 
-    Returns one RDKit molecule per input SMILES, in input order. Each molecule has explicit
-    hydrogens (unless ``add_hs`` is False) and up to ``n_conformers`` conformers with ids
-    ``0..k-1``. Samples with non-finite coordinates are dropped; their count is stored in the
-    integer property ``loqi_failed`` on the molecule (``0`` when all samples succeeded).
+    Each result contains up to ``n_conformers`` conformers with consecutive IDs.
+    Non-finite samples are omitted and counted in the ``loqi_failed`` property.
+    Hydrogens are explicit unless ``add_hs=False``. Invalid inputs raise ``ValueError``.
 
-    ``model`` is a registry name (``"loqi"``, ``"loqi_flow"``), a checkpoint path, or a
-    :class:`LoadedModel` (``device`` is only used when a model has to be loaded). ``steps``
-    defaults to the training step count (25); the diffusion model is not expected to work
-    well with other values, the flow-matching model tolerates them. ``batch_atoms`` is the
-    atom budget of a sampling batch at the 50-atom reference size (default:
-    ``data.inference_batch_size * 50`` from the config, 7500 for the released models); batches
-    of smaller molecules hold more atoms and batches of larger molecules fewer, so that the
-    number of edges of the fully connected graphs stays roughly constant. Lower it to reduce
-    memory use. Invalid SMILES raise :class:`ValueError` before any sampling happens.
+    ``model`` accepts a registry name, checkpoint path, or ``LoadedModel``. ``device``
+    applies when loading a model. Reuse a loaded model for repeated calls.
+
+    ``steps`` defaults to 25; use that value for diffusion checkpoints. ``batch_atoms``
+    sets the atom budget at the 50-atom reference size (default 7500). Adaptive batching
+    adjusts it for molecule size to keep graph edge counts roughly constant. Lower
+    the budget to reduce memory use.
     """
     smiles_list = [smiles] if isinstance(smiles, str) else list(smiles)
     if not smiles_list:

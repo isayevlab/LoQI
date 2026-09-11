@@ -1,10 +1,10 @@
-"""Argument parsing and early exits of the ``loqi`` command line interface."""
+"""CLI parsing and error handling."""
 
 from pathlib import Path
 
 import pytest
 
-from loqi.cli import _read_smiles_file, build_parser, main
+from loqi.cli import _load_smiles_file, build_parser, main
 
 
 def test_sample_parser_defaults_and_repeatable_smiles():
@@ -26,9 +26,25 @@ def test_sample_parser_defaults_and_repeatable_smiles():
 
 def test_sample_parser_options():
     args = build_parser().parse_args(
-        ["sample", "--input", "mols.smi", "--output", "o.sdf", "--model", "loqi_flow", "--device", "cpu",
-         "--seed", "1", "--steps", "50", "--batch-atoms", "1000", "--no-add-hs"]
-    )  # fmt: skip
+        [
+            "sample",
+            "--input",
+            "mols.smi",
+            "--output",
+            "o.sdf",
+            "--model",
+            "loqi_flow",
+            "--device",
+            "cpu",
+            "--seed",
+            "1",
+            "--steps",
+            "50",
+            "--batch-atoms",
+            "1000",
+            "--no-add-hs",
+        ]
+    )
     assert args.input == Path("mols.smi")
     assert args.model == "loqi_flow"
     assert args.device == "cpu"
@@ -73,4 +89,4 @@ def test_sample_with_only_invalid_smiles_exits_1(tmp_path, capsys):
 def test_read_smiles_file_skips_comments_and_names(tmp_path):
     path = tmp_path / "in.smi"
     path.write_text("# header\nCCO ethanol\n\nc1ccccc1\tbenzene\n")
-    assert _read_smiles_file(path) == ["CCO", "c1ccccc1"]
+    assert _load_smiles_file(path) == ["CCO", "c1ccccc1"]

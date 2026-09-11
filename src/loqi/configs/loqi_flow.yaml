@@ -1,8 +1,3 @@
-# Inference configuration for the released "loqi_flow" checkpoint, bundled with the loqi package.
-# Derived from scripts/conf/loqi/loqi_flow.yaml. Training-only paths are neutralised:
-# the node-count prior (sample.node_distribution) is only used for de novo sampling and is
-# never needed for conformer generation, dataset paths and the AIMNet2 model path are null,
-# and wandb is disabled. Use scripts/conf/loqi/loqi_flow.yaml for training and evaluation.
 run_name: 'loqi_flow_v1'
 outdir: null
 resume: null
@@ -46,9 +41,9 @@ interpolant:
   min_t: &min_t 0.0
   variables:
     - variable_name: 'x'
-      interpolant_type: 'continuous_flow_matching' #["continuous_diffusion", "continuous_flow_matching"]
+      interpolant_type: 'continuous_flow_matching'
       prediction_type: 'velocity'
-      optimal_transport: 'rigid' #'scale_ot'
+      optimal_transport: 'rigid'
       prior_type: 'gaussian'
       timesteps: *timesteps
       num_classes: 3
@@ -60,15 +55,15 @@ interpolant:
       noise_sigma: 0.0
       inference_noise_sigma: 0.
     - variable_name: 'h'
-      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      interpolant_type: "discrete_null"
       num_classes: &num_atoms 17
       prior_type: null
     - variable_name: 'edge_attr'
-      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      interpolant_type: "discrete_null"
       num_classes: 9
       prior_type: null
     - variable_name: 'charges'
-      interpolant_type: "discrete_null" #["discrete_diffusion", "discrete_flow_matching"]
+      interpolant_type: "discrete_null"
       concat: 'h'
       num_classes: 6
       offset: 2
@@ -135,4 +130,4 @@ lr_scheduler:
   final_lr: 1.e-4
   num_warmup_steps: 1000
   interval: step
-  frequency: 1 #not in config but this is the default
+  frequency: 1

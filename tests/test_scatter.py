@@ -1,4 +1,4 @@
-"""Numerics of megalodon.scatter (torch_geometric-backed torch_scatter replacements) against index_add_ references."""
+"""Scatter reductions checked against indexed tensor operations."""
 
 import pytest
 import torch
@@ -33,7 +33,6 @@ def test_scatter_sum_matches_index_add(case):
     assert torch.allclose(out, ref_sum(src, index, DIM_SIZE))
     assert torch.allclose(S.scatter_sum(src, index, dim=0, dim_size=DIM_SIZE), out)
     assert torch.allclose(S.scatter_add(src, index, dim=0, dim_size=DIM_SIZE), out)
-    # torch_scatter accepted "add" as an alias of "sum"; nextmol/jodo call it that way.
     assert torch.allclose(S.scatter(src, index, 0, reduce="add", dim_size=DIM_SIZE), out)
 
 
@@ -54,14 +53,13 @@ def test_dim_size_is_inferred_from_index(case):
 
 def test_default_dim_is_last_axis_for_1d_input(case):
     _, index = case
-    # denoising_models.py counts atoms per molecule with scatter_add(ones, batch) and the default dim=-1.
     counts = S.scatter_add(torch.ones_like(index), index)
     assert torch.equal(counts, torch.bincount(index))
 
 
 def test_negative_dim_is_resolved_against_src(case):
     src, index = case
-    src_t = src.T.contiguous()  # (4, 12): scatter along the last axis
+    src_t = src.T.contiguous()
     out = S.scatter(src_t, index, dim=-1, dim_size=DIM_SIZE, reduce="sum")
     assert out.shape == (4, DIM_SIZE)
     assert torch.allclose(out, ref_sum(src, index, DIM_SIZE).T)

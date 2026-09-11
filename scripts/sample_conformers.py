@@ -1,9 +1,4 @@
-"""Sample conformers with a LoQI checkpoint.
-
-Thin wrapper around the ``loqi`` package: validation, featurisation, batching and sampling live in
-``loqi.featurize`` / ``loqi.api``. The optional AIMNet2 optimisation, iRMSD pruning and the
-``--eval`` metrics are script-only postprocessing steps.
-"""
+"""Sample LoQI conformers with optional optimization, pruning, and evaluation."""
 
 import os
 import pickle
@@ -53,7 +48,7 @@ def optimize_with_aimnet(
     try:
         _, _, opt_mols, opt_energies = energy_metrics(molecules, reference_molecules=None, return_molecules=True)
         return opt_mols, opt_energies, None
-    except Exception as exc:  # noqa: BLE001 - reported to the caller as an error string
+    except Exception as exc:
         return None, None, f"Optimization failed: {exc}"
 
 
@@ -63,15 +58,13 @@ def select_unique_with_irmsd(molecules, rthr=0.125):
     if len(molecules) == 0:
         return [], [], None
     if len(molecules) == 1:
-        # Nothing to prune for a single conformer.
         return molecules, [0], None
 
     try:
-        from irmsd import sorter_irmsd_rdkit  # type: ignore
-    except Exception:  # noqa: BLE001
+        from irmsd import sorter_irmsd_rdkit
+    except Exception:
         return None, None, "iRMSD is not installed. Install with: pip install irmsd"
     try:
-        # iinversion=2 disables inversion.
         groups, _ = sorter_irmsd_rdkit(molecules, rthr=float(rthr), iinversion=2, allcanon=True, printlvl=0)
         groups = np.asarray(groups).reshape(-1)
         if groups.shape[0] != len(molecules):
@@ -86,7 +79,7 @@ def select_unique_with_irmsd(molecules, rthr=0.125):
             return None, None, "iRMSD did not produce any unique representatives."
         unique_mols = [molecules[i] for i in selected_indices]
         return unique_mols, selected_indices, None
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         return None, None, f"iRMSD pruning failed: {exc}"
 
 
@@ -187,7 +180,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Load model
     loaded = load_model(args.ckpt, config=args.config)
     model, cfg = loaded.model, loaded.config
     cfg_opt_params = getattr(getattr(cfg.evaluation, "energy_metrics_args", None), "opt_params", None)
@@ -197,8 +189,6 @@ def main():
     )
     sample_batch_size = args.batch_size if args.batch_size is not None else loaded.default_batch_size
 
-    # Load molecules and replicate them n_confs times.
-    # Use provided 3D coordinates only for SDF inputs that already contain conformers.
     input_is_sdf = os.path.isfile(args.input) and args.input.endswith(".sdf")
     mols, validation_errors = load_molecules(args.input, add_hs=args.add_hs)
     for err in validation_errors:
@@ -221,7 +211,6 @@ def main():
         target_molecule_size=int(args.target_molecule_size),
     )
 
-    # Sampling
     generated = []
     skip_eval = not args.eval
     references = [] if not skip_eval else None
@@ -265,7 +254,6 @@ def main():
             energies = energies[selected_indices]
         print(f"iRMSD unique selection complete: {len(generated)} conformers.")
 
-    # Save output
     if args.output.endswith(".sdf"):
         from rdkit.Chem import SDWriter
 
@@ -285,7 +273,6 @@ def main():
         with open(args.output, "wb") as f:
             pickle.dump(output_dict, f)
 
-    # Evaluate only if references are available and evaluation is not skipped
     if not skip_eval and references and has_3d_input:
         if not cfg.data.get("dataset_root"):
             raise ValueError("--eval needs a config with data.dataset_root (e.g. scripts/conf/loqi/loqi.yaml).")

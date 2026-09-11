@@ -1,4 +1,4 @@
-"""Checkpoint registry and verified download cache."""
+"""Checkpoint resolution, caching, and checksum tests."""
 
 import hashlib
 import re

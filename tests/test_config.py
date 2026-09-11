@@ -1,4 +1,4 @@
-"""Bundled inference configs."""
+"""Bundled configuration validation."""
 
 import pytest
 from omegaconf import OmegaConf

@@ -1,10 +1,7 @@
-"""Drop-in replacements for the ``torch_scatter`` functions used in this package.
+"""Scatter reductions using PyTorch Geometric.
 
-Implemented on top of :func:`torch_geometric.utils.scatter` /
-:func:`torch_geometric.utils.softmax`, which fall back to pure ``torch``
-(``index_add_`` / ``scatter_reduce``) when the compiled ``torch_scatter``
-extension is not installed.  Signatures follow ``torch_scatter`` (``dim``
-defaults to ``-1``; ``out=`` is not supported).
+These wrappers use PyTorch fallbacks when compiled extensions are unavailable.
+The reduction axis defaults to the last dimension. Output buffers are unsupported.
 """
 
 from torch import Tensor
@@ -12,7 +9,7 @@ from torch_geometric.utils import scatter as _pyg_scatter
 from torch_geometric.utils import softmax as _pyg_softmax
 
 
-def _resolve_dim(src: Tensor, dim: int) -> int:
+def _normalize_axis(src: Tensor, dim: int) -> int:
     return src.dim() + dim if dim < 0 else dim
 
 
@@ -26,7 +23,7 @@ def scatter(
 ) -> Tensor:
     if out is not None:
         raise NotImplementedError("`out=` is not supported by the torch_geometric-backed scatter")
-    return _pyg_scatter(src, index, dim=_resolve_dim(src, dim), dim_size=dim_size, reduce=reduce)
+    return _pyg_scatter(src, index, dim=_normalize_axis(src, dim), dim_size=dim_size, reduce=reduce)
 
 
 def scatter_sum(
@@ -45,4 +42,4 @@ def scatter_mean(
 
 
 def scatter_softmax(src: Tensor, index: Tensor, dim: int = -1, dim_size: int | None = None) -> Tensor:
-    return _pyg_softmax(src, index, num_nodes=dim_size, dim=_resolve_dim(src, dim))
+    return _pyg_softmax(src, index, num_nodes=dim_size, dim=_normalize_axis(src, dim))

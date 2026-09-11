@@ -17,7 +17,6 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Packaging artefacts
 *.egg-info/
 /dist/
 /build/
