@@ -1,5 +1,5 @@
 import torch
-from torch_scatter import scatter_mean
+from megalodon.scatter import scatter_mean
 
 
 def zero_com_pyg(coords, batch):

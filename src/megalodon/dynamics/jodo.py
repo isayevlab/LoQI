@@ -24,7 +24,7 @@ from torch.nn import Linear
 from torch_geometric.nn.conv import MessagePassing
 from torch_geometric.typing import Adj, OptTensor
 from torch_geometric.utils import dense_to_sparse, softmax
-from torch_scatter import scatter
+from megalodon.scatter import scatter
 
 
 def coord2dist(x, edge_index):

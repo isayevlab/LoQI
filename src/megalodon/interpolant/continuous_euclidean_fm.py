@@ -15,7 +15,7 @@
 
 
 import torch
-from torch_scatter import scatter_mean
+from megalodon.scatter import scatter_mean
 
 from megalodon.interpolant.interpolant import Interpolant
 from megalodon.interpolant.interpolant_scheduler import build_scheduler

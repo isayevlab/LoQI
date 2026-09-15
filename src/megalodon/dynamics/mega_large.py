@@ -24,7 +24,7 @@ import torch.nn.functional as F
 from torch_geometric.nn import MessagePassing
 from torch_geometric.nn.norm import LayerNorm as BatchLayerNorm
 from torch_geometric.utils import softmax
-from torch_scatter import scatter, scatter_mean
+from megalodon.scatter import scatter, scatter_mean
 
 from megalodon.dynamics.utils import PredictionHead
 

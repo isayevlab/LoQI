@@ -8,7 +8,7 @@ from torch_geometric.utils import softmax
 import math
 from typing import Tuple, Optional
 from torch_geometric.typing import Adj, OptTensor
-from torch_scatter import scatter
+from megalodon.scatter import scatter
 
 if torch.cuda.is_available():
     disable_compile = torch.cuda.get_device_name(0).find('AMD') >= 0

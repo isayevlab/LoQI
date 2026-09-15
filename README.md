@@ -55,15 +55,13 @@ We then developed **LoQI** (Low-energy QM Informed conformer generative model), 
 
 ## Setup
 
-Installation will usually take up to 20 minutes.
-
 ### System and Hardware Requirements
 
 - OS tested by authors:
   - Ubuntu 24.04 LTS (latest stable Ubuntu LTS at time of writing)
 - Other platforms:
-  - Expected to work, but if installation is not out-of-the-box, use the PyTorch Geometric installation guide for your exact Python/PyTorch/CUDA combination:
-    https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html
+  - Expected to work: only `torch` and the pure-Python `torch_geometric` are required, no compiled
+    PyTorch Geometric extensions.
 - Tested inference hardware:
   - GPU: NVIDIA RTX 3090 (24 GB VRAM)
   - CPU: AMD Ryzen 9 5950X
@@ -72,37 +70,81 @@ Installation will usually take up to 20 minutes.
 - Minimum practical GPU memory:
   - 8 GB VRAM can run inference, but requires reduced batch sizes
 - CPU-only:
-  - Possible, but not recommended and not systematically studied by the authors
+  - Works (the package tests run on CPU, see [Tests](#tests)) but is slow for large
+    molecules or many conformers and was not systematically studied by the authors
 
 OOM mitigation for larger molecules:
 - reduce inference batch size (`--batch_size` in sampling, or `data.inference_batch_size` in config)
 - if using evaluation/optimization, also reduce optimization batch size (`evaluation.energy_metrics_args.batchsize`)
 
-### Prerequisites
+### Installation
 
-- Python 3.10+
-- CUDA-compatible GPU (recommended for training)
-- [Conda](https://docs.conda.io/) or [Mamba](https://mamba.readthedocs.io/) (recommended)
-
-### Environment Setup
+LoQI requires Python 3.11+ and PyTorch 2.8+. Install from GitHub until a PyPI
+release is available:
 
 ```bash
-# Clone the repository
-git clone https://github.com/isayevlab/LoQI.git
-cd LoQI
-
-# Create and activate conda environment
-conda create -n loqi python=3.10 -y
-conda activate loqi
-
-# Install core dependencies
-pip install -r requirements.txt
-
-# Install this package in editable mode (adds src to PYTHONPATH)
-pip install -e .
+pip install "loqi @ git+https://github.com/isayevlab/LoQI"
 ```
 
-If you prefer a fully conda-based setup (recommended for RDKit), you can install RDKit via conda-forge before running `pip install -r requirements.txt`.
+For CUDA, install the matching PyTorch build first. Compiled PyTorch Geometric
+extensions are not required for the released LoQI models.
+
+For development, clone the repository and run `pip install -e ".[dev]"`.
+Optional extras are `train` for training and preprocessing, `aimnet` for the
+AIMNet2 package, and `dev` for tests and linting.
+
+### Quick start
+
+```python
+from loqi import generate_conformers
+
+molecules = generate_conformers(["CCO", "CC(=O)Oc1ccccc1C(=O)O"], n_conformers=10, device="cpu")
+for molecule in molecules:
+    print(molecule.GetNumConformers(), molecule.GetIntProp("loqi_failed"))
+```
+
+The API returns one RDKit molecule per input SMILES, with explicit hydrogens by
+default. Non-finite samples are omitted and counted in `loqi_failed`. Invalid
+SMILES raise `ValueError`. Use `load_model()` once for repeated sampling:
+
+```python
+from loqi import generate_conformers, load_model
+
+model = load_model("loqi_flow", device="cuda")
+molecules = generate_conformers("c1ccncc1", 50, model=model, seed=0, batch_atoms=2000)
+```
+
+`steps` defaults to 25; keep that value for diffusion checkpoints. Flow matching
+supports other step counts. Lower `batch_atoms` to reduce memory use; it is an
+adaptive budget at a reference size of 50 atoms, with a default of 7500.
+
+```bash
+loqi download --model loqi
+loqi sample --smiles "CCO" --n-confs 10 --output confs.sdf
+loqi sample --input molecules.smi --model loqi_flow --device cuda --output confs.sdf
+```
+
+The CLI skips invalid SMILES and writes one SDF record per conformer, with
+`loqi_model` and `loqi_conformer_id` properties. Use `--steps`, `--batch-atoms`,
+or `--no-add-hs` to adjust sampling.
+
+### Checkpoints
+
+`loqi` and `loqi_flow` are downloaded from
+[KiltHub](https://doi.org/10.1184/R1/31441570), verified by SHA-256, and cached in
+`$LOQI_CACHE_DIR` or `~/.cache/loqi`. Each checkpoint is about 360 MB. To use a local
+checkpoint, call `load_model("/path/model.ckpt", config="loqi.yaml")`; both inference
+configs are included in the package.
+
+LoQI code and checkpoints use the MIT license. Bundled Megalodon code retains its
+Apache-2.0 license and third-party notices in `megalodon_licence/`.
+
+### Tests
+
+Run `pytest` for unit tests and `ruff check .` for linting. To include CPU sampling
+tests, first cache the released checkpoint with `loqi download --model loqi`, then
+run `pytest -o addopts=""`. The sampling tests check valid coordinates, seed
+reproducibility, and SDF output.
 
 ### Data Setup
 
@@ -189,7 +231,9 @@ streamlit run app/app.py
 
 ## Usage
 
-Make sure that `src` content is available in your `PYTHONPATH` (e.g., `export PYTHONPATH="./src:$PYTHONPATH"`) if LoQI is not installed locally (`pip install -e .`). 
+Install the package (`pip install -e .`) so that `loqi` and `megalodon` are importable. For
+conformer generation from Python or the `loqi` command see [Quick start](#quick-start); the scripts
+below cover training, evaluation and postprocessing.
 
 ### Model Training
 
@@ -249,17 +293,17 @@ python scripts/sample_conformers.py \
     --irmsd_rthr 0.125
 ```
 
-Recent sampling updates in `scripts/sample_conformers.py`:
-- input validation + SMILES revalidation (canonical roundtrip), with unsupported-element/radical checks
-- atom-aware dynamic batching for inference (`--atom-aware-batching`, `--target-molecule-size`, `--shuffle`)
-- optional hydrogen addition for SMILES inputs (`--add-hs` / `--no-add-hs`)
-- no RDKit conformer initialization for SMILES; zero-initialized coordinates are used
-- if input is SDF with conformers, existing 3D coordinates are used
-- optional postprocessing (`--postprocess none|optimization|optimization+irmsd`)
+The script shares loading and sampling with the package. `--ckpt` accepts a
+registered model name or a local path; `--config` defaults to the bundled
+inference configuration. It supports SMILES and SDF input, adaptive batching,
+and optional AIMNet2 optimization and iRMSD pruning.
 
 On the tested setup (RTX 3090 + Ryzen 9 5950X), inference for a typical ChEMBL molecule takes approximately 0.1 seconds per conformer when processed within a batch. See **System and Hardware Requirements** above for VRAM guidance and OOM mitigation.
 
-Note: Make sure you define correct paths for dataset and AimNet2 model in `loqi.yaml`. The relative path of AimNet2 model is `src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt`.
+Note: `--eval` needs the repository config (`--config scripts/conf/loqi/loqi.yaml`) with
+`data.dataset_root` pointing at the processed ChEMBL3D data. `--postprocess optimization` uses the
+AIMNet2 model bundled with the package (`megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt`)
+unless the config sets `evaluation.energy_metrics_args.model_path`.
 
 Sampling steps: `--n_steps` defaults to 25. Diffusion models were trained with 25 steps and are not expected to work well for other values. Flow-matching models can be run with different step counts.
 
