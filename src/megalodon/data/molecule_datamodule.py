@@ -15,13 +15,17 @@
 
 
 from typing import Optional
+import logging
+import time
 
-from pytorch_lightning import LightningDataModule
+import torch
+from lightning.pytorch import LightningDataModule
 from torch_geometric.loader import DataLoader, DynamicBatchSampler
 
 from megalodon.data.adaptive_dataloader import AdaptiveBatchSampler
 from megalodon.data.midi_dataloader import MiDiDataloader
 from megalodon.data.molecule_dataset import MoleculeDataset
+from megalodon.data.size_sampler import SizeTailSampler
 
 
 class MoleculeDataModule(LightningDataModule):
@@ -45,6 +49,7 @@ class MoleculeDataModule(LightningDataModule):
             batch_size: Optional[int] = None,
             data_loader_type: str = "adaptive",
             inference_batch_size: Optional[int] = None,
+            train_size_sampling: Optional[dict] = None,
             **sampler_kwargs,
     ):
         super().__init__()
@@ -53,6 +58,7 @@ class MoleculeDataModule(LightningDataModule):
         self.batch_size = batch_size
         self.inference_batch_size = inference_batch_size or batch_size
         self.data_loader_type = data_loader_type
+        self.train_size_sampling = dict(train_size_sampling or {})
         self.sampler_kwargs = sampler_kwargs
         self.pin_memory = True
         
@@ -77,7 +83,7 @@ class MoleculeDataModule(LightningDataModule):
 
     def train_dataloader(self):
         """Returns the DataLoader for training dataset."""
-        return self._create_dataloader(self.train_dataset, self.batch_size, shuffle=True)
+        return self._create_dataloader(self.train_dataset, self.batch_size, shuffle=True, is_train=True)
 
     def val_dataloader(self):
         """Returns the DataLoader for validation dataset."""
@@ -91,7 +97,7 @@ class MoleculeDataModule(LightningDataModule):
         """Returns the DataLoader for prediction dataset."""
         return self._create_dataloader(self.test_dataset, self.inference_batch_size, shuffle=False)
 
-    def _create_dataloader(self, dataset, batch_size, shuffle):
+    def _create_dataloader(self, dataset, batch_size, shuffle, is_train=False):
         """Creates a DataLoader for a given dataset.
 
         Args:
@@ -108,10 +114,34 @@ class MoleculeDataModule(LightningDataModule):
         elif self.data_loader_type == "dynamic":
             sampler = DynamicBatchSampler(dataset, **self.sampler_kwargs)
         elif self.data_loader_type == "midi":
-            return MiDiDataloader(dataset, batch_size=batch_size, shuffle=shuffle,
-                                  **self.sampler_kwargs)
+            sampler = None
+            if is_train and self.train_size_sampling:
+                sampling_started = time.perf_counter()
+                sampling_config = dict(self.train_size_sampling)
+                if torch.distributed.is_available() and torch.distributed.is_initialized():
+                    sampling_config.update(
+                        num_replicas=torch.distributed.get_world_size(),
+                        rank=torch.distributed.get_rank(),
+                    )
+                sampler = SizeTailSampler(dataset, **sampling_config)
+                logging.info(
+                    "Size sampler ready in %.3fs: rank=%d/%d, candidates=%d, local_samples=%d",
+                    time.perf_counter() - sampling_started, sampler.rank,
+                    sampler.num_replicas, len(sampler.expanded_indices), len(sampler),
+                )
+                shuffle = False
+            return MiDiDataloader(
+                dataset,
+                batch_size=batch_size,
+                shuffle=shuffle,
+                sampler=sampler,
+                **self.sampler_kwargs,
+            )
         else:
             sampler = None
+
+        if is_train and self.train_size_sampling and self.data_loader_type != "midi":
+            raise ValueError("train_size_sampling currently requires data_loader_type='midi'")
 
         if sampler is not None:
             return DataLoader(dataset, batch_sampler=sampler, num_workers=4,

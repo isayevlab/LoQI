@@ -11,7 +11,11 @@ standard LoQI train/validation/test PyG datasets and statistics.
 from __future__ import annotations
 
 import argparse
+import csv
+import hashlib
 import importlib.util
+import json
+import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
@@ -121,7 +125,12 @@ def split_conformers(
     val_ratio: float = 0.1,
     seed: int = 42,
 ) -> dict[str, list[SelectedConformer]]:
-    """Reproducibly split selected conformers using the project split policy."""
+    """Split by stable parent identity so variants cannot leak across splits.
+
+    A hash assignment is independent of input ordering and remains stable when
+    later recovery molecules are added. ChEMBL variant suffixes (for example
+    ``CHEMBL123_0``) are grouped under their base ChEMBL identifier.
+    """
     if not 0 < train_ratio < 1 or not 0 < val_ratio < 1:
         raise ValueError("train_ratio and val_ratio must be between zero and one")
     if train_ratio + val_ratio >= 1:
@@ -129,22 +138,108 @@ def split_conformers(
     if len(records) < 3:
         raise ValueError("At least three selected molecules are required for three splits")
 
-    rng = np.random.RandomState(seed)
-    indices = rng.permutation(len(records))
-    n_train = int(train_ratio * len(records))
-    n_val = int(val_ratio * len(records))
-    if n_train == 0 or n_val == 0 or n_train + n_val == len(records):
-        raise ValueError("Dataset is too small for the requested split ratios")
+    parents = {parent_mol_id(record.mol_id) for record in records}
+    if len(parents) < 3:
+        raise ValueError("At least three parent molecules are required for three splits")
 
-    split_indices = {
-        "train": indices[:n_train],
-        "val": indices[n_train:n_train + n_val],
-        "test": indices[n_train + n_val:],
-    }
-    return {
-        name: [records[int(index)] for index in split_indices[name]]
+    parent_splits = {}
+    for parent in parents:
+        value = stable_split_value(parent, seed)
+        if value < train_ratio:
+            split = "train"
+        elif value < train_ratio + val_ratio:
+            split = "val"
+        else:
+            split = "test"
+        parent_splits[parent] = split
+
+    # Extremely small smoke datasets can hash into fewer than three buckets.
+    # Use the same stable hashes to create non-empty fallback partitions.
+    if set(parent_splits.values()) != set(SPLIT_NAMES):
+        ordered = sorted(parents, key=lambda parent: (stable_split_value(parent, seed), parent))
+        n_train = max(1, int(train_ratio * len(ordered)))
+        n_val = max(1, int(val_ratio * len(ordered)))
+        if n_train + n_val >= len(ordered):
+            n_train = len(ordered) - 2
+            n_val = 1
+        for index, parent in enumerate(ordered):
+            if index < n_train:
+                parent_splits[parent] = "train"
+            elif index < n_train + n_val:
+                parent_splits[parent] = "val"
+            else:
+                parent_splits[parent] = "test"
+
+    splits = {name: [] for name in SPLIT_NAMES}
+    for record in records:
+        splits[parent_splits[parent_mol_id(record.mol_id)]].append(record)
+    return splits
+
+
+_CHEMBL_VARIANT = re.compile(r"^(CHEMBL\d+)(?:_\d+)?$")
+
+
+def parent_mol_id(mol_id: str) -> str:
+    """Return the stable parent identity used to prevent split leakage."""
+    match = _CHEMBL_VARIANT.fullmatch(mol_id)
+    return match.group(1) if match else mol_id
+
+
+def stable_split_value(parent_id: str, seed: int) -> float:
+    """Map a parent ID and seed to a deterministic value in ``[0, 1)``."""
+    digest = hashlib.sha256(f"{seed}:{parent_id}".encode()).digest()
+    return int.from_bytes(digest[:8], "big") / 2**64
+
+
+def audit_split_parents(splits: Mapping[str, Sequence[SelectedConformer]]) -> dict[str, int]:
+    """Require disjoint parent identities and return parent counts."""
+    parent_sets = {
+        name: {parent_mol_id(record.mol_id) for record in splits[name]}
         for name in SPLIT_NAMES
     }
+    for left_index, left in enumerate(SPLIT_NAMES):
+        for right in SPLIT_NAMES[left_index + 1:]:
+            overlap = parent_sets[left] & parent_sets[right]
+            if overlap:
+                raise ValueError(
+                    f"Parent identity leakage between {left} and {right}: "
+                    f"{sorted(overlap)[:5]}"
+                )
+    return {name: len(parent_sets[name]) for name in SPLIT_NAMES}
+
+
+def write_split_manifest(
+    splits: Mapping[str, Sequence[SelectedConformer]], path: Path
+) -> None:
+    """Save every selected row and its stable parent/split assignment."""
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("split", "parent_id", "mol_id", "group", "row", "energy", "stereo_id"),
+        )
+        writer.writeheader()
+        for split_name in SPLIT_NAMES:
+            for record in splits[split_name]:
+                writer.writerow(
+                    {
+                        "split": split_name,
+                        "parent_id": parent_mol_id(record.mol_id),
+                        "mol_id": record.mol_id,
+                        "group": f"{record.group:03d}",
+                        "row": record.row,
+                        "energy": repr(record.energy),
+                        "stereo_id": record.stereo_id,
+                    }
+                )
+
+
+def file_sha256(path: Path) -> str:
+    """Return the SHA-256 digest of a provenance file."""
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def parse_groups(value: str | None) -> list[int] | None:
@@ -363,10 +458,37 @@ def process(args: argparse.Namespace) -> None:
         val_ratio=args.val_ratio,
         seed=args.seed,
     )
+    parent_counts = audit_split_parents(splits)
     print("Split sizes: " + ", ".join(f"{key}={len(value)}" for key, value in splits.items()))
+    print("Parent counts: " + ", ".join(f"{key}={parent_counts[key]}" for key in SPLIT_NAMES))
+    split_manifest = processed_path / "split_manifest.csv"
+    write_split_manifest(splits, split_manifest)
 
     graphs, missing, failed = build_graph_splits(dataset, topology_folder, splits)
     save_graph_splits(graphs, processed_path)
+
+    release_manifest = dataset_dir / "release_manifest.json"
+    provenance = {
+        "dataset_dir": str(dataset_dir),
+        "release_manifest": str(release_manifest) if release_manifest.is_file() else None,
+        "release_manifest_sha256": file_sha256(release_manifest) if release_manifest.is_file() else None,
+        "groups": [int(group) for group in groups],
+        "limit_molecules": limit_molecules,
+        "seed": args.seed,
+        "train_ratio": args.train_ratio,
+        "val_ratio": args.val_ratio,
+        "selected_records": len(records),
+        "split_records": {name: len(splits[name]) for name in SPLIT_NAMES},
+        "split_parents": parent_counts,
+        "processed_graphs": {name: len(graphs[name]) for name in SPLIT_NAMES},
+        "missing_topologies": missing,
+        "failed_conversions": failed,
+        "split_manifest": str(split_manifest),
+        "split_manifest_sha256": file_sha256(split_manifest),
+    }
+    (processed_path / "preprocessing_manifest.json").write_text(
+        json.dumps(provenance, indent=2, sort_keys=True) + "\n"
+    )
     print(
         f"Completed: output={processed_path}, missing_topologies={missing}, "
         f"failed_conversions={failed}"

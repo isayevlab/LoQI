@@ -4,6 +4,7 @@ import os
 import pickle
 from argparse import ArgumentParser, BooleanOptionalAction
 from importlib.resources import files
+from pathlib import Path
 
 import numpy as np
 import torch
@@ -23,6 +24,7 @@ from megalodon.metrics.molecule_metrics_aimnet2 import MoleculeAIMNet2Metrics
 Chem.SetUseLegacyStereoPerception(True)
 
 BUNDLED_AIMNET2_MODEL = files("megalodon").joinpath("metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt")
+RELEASE_CHECKPOINT = Path(__file__).resolve().parents[1] / "data/loqi_flow_v0.2.0.ckpt"
 
 
 def optimize_with_aimnet(
@@ -95,8 +97,8 @@ def main():
     parser.add_argument(
         "--ckpt",
         type=str,
-        default="loqi",
-        help="Checkpoint path or registered model name ('loqi', 'loqi_flow'; downloaded on first use).",
+        default=str(RELEASE_CHECKPOINT) if RELEASE_CHECKPOINT.is_file() else "loqi_flow_v0.2.0",
+        help="Checkpoint path or registered model name (loqi, loqi_flow, loqi_flow_v0.2.0). Defaults to v0.2.0; downloaded if not available locally.",
     )
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--n_confs", type=int, default=1)
@@ -178,10 +180,17 @@ def main():
             "Use --no-use-stereo-bonds for ablation experiments."
         ),
     )
+    parser.add_argument(
+        '--c-chirality', '--c_chirality', dest='c_chirality', action='store_true',
+        help='Legacy checkpoint option: encode R/S edges only for four-neighbor carbon centers; E/Z unchanged.',
+    )
     args = parser.parse_args()
 
-    loaded = load_model(args.ckpt, config=args.config)
-    model, cfg = loaded.model, loaded.config
+    mols, validation_errors = load_molecules(args.input, add_hs=args.add_hs)
+    for err in validation_errors:print(f"WARNING: {err}")
+    if not mols:raise ValueError('No valid molecules left after validation/revalidation checks.')
+    loaded=load_model(args.ckpt,config=args.config)
+    cfg=loaded.config
     cfg_opt_params = getattr(getattr(cfg.evaluation, "energy_metrics_args", None), "opt_params", None)
     opt_fmax = float(args.opt_fmax) if args.opt_fmax is not None else float(getattr(cfg_opt_params, "fmax", 0.05))
     opt_max_nstep = (
@@ -190,11 +199,6 @@ def main():
     sample_batch_size = args.batch_size if args.batch_size is not None else loaded.default_batch_size
 
     input_is_sdf = os.path.isfile(args.input) and args.input.endswith(".sdf")
-    mols, validation_errors = load_molecules(args.input, add_hs=args.add_hs)
-    for err in validation_errors:
-        print(f"WARNING: {err}")
-    if not mols:
-        raise ValueError("No valid molecules left after validation/revalidation checks.")
     has_3d_input = any(mol.GetNumConformers() > 0 for mol in mols) if input_is_sdf else False
     use_3d_input = input_is_sdf and has_3d_input
     data_list = mols_to_data_list(
@@ -202,6 +206,7 @@ def main():
         n_confs=args.n_confs,
         use_3d_input=use_3d_input,
         use_stereo_bonds=bool(args.use_stereo_bonds),
+        c_chirality=args.c_chirality,
     )
     loader = build_sampling_loader(
         data_list,
@@ -293,7 +298,7 @@ def main():
                 pos = conf.GetPositions()
                 conf.SetPositions(pos)
                 ref.AddConformer(conf)
-        results = eval_cb.evaluate_molecules(generated, reference_molecules=references, device=model.device)
+        results = eval_cb.evaluate_molecules(generated, reference_molecules=references, device=loaded.model.device)
         print("Evaluation Results:")
         print(results)
 

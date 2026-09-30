@@ -29,6 +29,22 @@
 
 ## Overview
 
+### Flow checkpoint v0.2.0
+
+Extended large-molecule capability and improved performance on very small
+molecules. **Non-carbon chirality control remains limited and needs further work**;
+R/S conditioning currently supports only tetrahedral centers with four explicit neighbors.
+
+Download [loqi_flow_v0.2.0.ckpt](https://drive.google.com/file/d/16w8tv0zy06OdCQLQw28YJyk83-p0F0Q5/view?usp=sharing)
+to `data/loqi_flow_v0.2.0.ckpt`, or use the registered model
+`loqi_flow_v0.2.0` for a SHA-256-verified download. The app defaults to
+**Flow Matching v0.2.0**; `scripts/sample_conformers.py` also defaults to this release.
+Legacy checkpoints remain available.
+
+```bash
+loqi sample --smiles "CCO" --model loqi_flow_v0.2.0 --output confs.sdf
+```
+
 <div align="center">
     <img width="700" alt="Macrocycles" src="assets/macrocycles.svg"/>
 </div>
@@ -107,6 +123,8 @@ The API returns one RDKit molecule per input SMILES, with explicit hydrogens by
 default. Non-finite samples are omitted and counted in `loqi_failed`. Invalid
 SMILES raise `ValueError`. Use `load_model()` once for repeated sampling:
 
+All molecule sizes use LoQI, including 2–4 atoms; there is no RDKit fallback.
+
 ```python
 from loqi import generate_conformers, load_model
 
@@ -128,6 +146,17 @@ The CLI skips invalid SMILES and writes one SDF record per conformer, with
 `loqi_model` and `loqi_conformer_id` properties. Use `--steps`, `--batch-atoms`,
 or `--no-add-hs` to adjust sampling.
 
+#### Stereochemistry
+
+R/S conditioning and evaluation require four explicit bonded neighbors (including
+hydrogens); three-neighbor sulfoxide centers are excluded. For legacy carbon-only
+conditioning, use the app's `c_chirality` checkbox, CLI `--c-chirality`, or API
+`c_chirality=True`. E/Z conditioning is unchanged.
+
+**SDF warning:** RDKit may silently lose chirality when a 2D SDF has atom parity
+but no wedge/hash bonds. Prefer stereospecified SMILES, or verify stereo after
+loading the SDF against the original SMILES.
+
 ### Checkpoints
 
 `loqi` and `loqi_flow` are downloaded from
@@ -135,6 +164,9 @@ or `--no-add-hs` to adjust sampling.
 `$LOQI_CACHE_DIR` or `~/.cache/loqi`. Each checkpoint is about 360 MB. To use a local
 checkpoint, call `load_model("/path/model.ckpt", config="loqi.yaml")`; both inference
 configs are included in the package.
+
+The newer `loqi_flow_v0.2.0` checkpoint uses the Google Drive link above and the
+same verified cache mechanism, with `loqi_flow.yaml` as its inference config.
 
 LoQI code and checkpoints use the MIT license. Bundled Megalodon code retains its
 Apache-2.0 license and third-party notices in `megalodon_licence/`.
@@ -281,7 +313,7 @@ python scripts/sample_conformers.py \
 # Optional postprocessing: AIMNet2 optimization + iRMSD unique-set pruning
 python scripts/sample_conformers.py \
     --config scripts/conf/loqi/loqi_flow.yaml \
-    --ckpt data/loqi_flow.ckpt \
+    --ckpt data/loqi_flow_v0.2.0.ckpt \
     --input "CC(=O)Oc1ccccc1C(=O)O" \
     --output outputs/aspirin_opt_unique.sdf \
     --n_confs 50 \

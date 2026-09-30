@@ -1,11 +1,12 @@
 from copy import deepcopy
 
 import numpy as np
+import torch
 from lightning import pytorch as pl
 from rdkit import Chem
 
 from megalodon.metrics.molecule_metrics_3d import Molecule3DMetrics
-from megalodon.metrics.molecule_metrics_aimnet2 import MoleculeAIMNet2Metrics
+from megalodon.metrics.molecule_metrics_aimnet2 import MoleculeAIMNet2Metrics, is_valid
 from megalodon.metrics.preserved_stereo import StereoMetrics
 
 full_atom_encoder = {
@@ -29,6 +30,23 @@ full_atom_encoder = {
 }
 
 full_atom_decoder = dict(map(reversed, full_atom_encoder.items()))
+
+
+def mean_available_metrics(metrics, device):
+    """Average observed rank-level metrics, excluding empty-rank NaNs.
+
+    Every rank must supply the same keys, including unavailable measurements.
+    If no rank observed a metric, retain NaN instead of reporting a false zero.
+    """
+    if not metrics or not torch.distributed.is_initialized():
+        return metrics
+    keys = sorted(metrics)
+    values = torch.tensor([metrics[key] for key in keys], device=device, dtype=torch.float64)
+    available = torch.isfinite(values)
+    totals = torch.stack((torch.where(available, values, 0.0), available.to(values.dtype)))
+    torch.distributed.all_reduce(totals)
+    means = totals[0] / totals[1]
+    return dict(zip(keys, means.tolist()))
 
 
 def convert_coords_to_np(out):
@@ -160,13 +178,24 @@ class ConformerEvaluationCallback(pl.Callback):
             results.update(mol_3d_res)
 
         if self.compute_energy_metrics:
-            energy_metrics = MoleculeAIMNet2Metrics(
-                model_path=self.energy_metrics_args["model_path"],
-                batchsize=self.energy_metrics_args["batchsize"],
-                opt_metrics=self.energy_metrics_args["opt_metrics"],
-                opt_params=self.energy_metrics_args["opt_params"],
-                device=device)
-            energy_res = energy_metrics(molecules, reference_molecules=reference_molecules)
+            if reference_molecules is not None:
+                assert len(molecules) == len(reference_molecules)
+            valid_indices = [i for i, mol in enumerate(molecules) if is_valid(mol)]
+            if valid_indices:
+                energy_metrics = MoleculeAIMNet2Metrics(
+                    model_path=self.energy_metrics_args["model_path"],
+                    batchsize=self.energy_metrics_args["batchsize"],
+                    opt_metrics=self.energy_metrics_args["opt_metrics"],
+                    opt_params=self.energy_metrics_args["opt_params"],
+                    device=device)
+                references = ([reference_molecules[i] for i in valid_indices]
+                              if reference_molecules is not None else None)
+                energy_res = energy_metrics([molecules[i] for i in valid_indices],
+                                            reference_molecules=references)
+            else:
+                # Do not even load AIMNet when no usable molecules remain.
+                energy_res = MoleculeAIMNet2Metrics.empty_values(
+                    self.energy_metrics_args["opt_metrics"], reference_molecules is not None)
             results.update(energy_res)
 
         if self.compute_stereo_metrics:
@@ -197,6 +226,13 @@ class ConformerEvaluationCallback(pl.Callback):
         """
         results = self.evaluate_molecules(self.molecules, self.reference_molecules,
                                           pl_module.device)
+        if self.compute_energy_metrics:
+            energy_keys = MoleculeAIMNet2Metrics.empty_values(
+                self.energy_metrics_args["opt_metrics"], True)
+            results.update(mean_available_metrics(
+                {key: results[key] for key in energy_keys}, pl_module.device))
         self.molecules = []
         self.reference_molecules = []
-        pl_module.log_dict(results, sync_dist=True)
+        # Empty and populated evaluations can insert identical keys in different
+        # orders. Lightning reduces each logged value separately: order must match.
+        pl_module.log_dict(dict(sorted(results.items())), sync_dist=True)

@@ -40,6 +40,7 @@ POSTPROCESS_OPT_IRMSD = "optimization + irmsd unique set selection"
 
 EV_TO_KCAL_PER_MOL = 23.060547830619026
 MODEL_OPTIONS = [
+    "Flow Matching v0.2.0",
     "Diffusion",
     "Flow Matching",
 ]
@@ -53,6 +54,7 @@ class SidebarConfig:
     opt_fmax: float
     opt_max_nstep: int
     irmsd_rthr: float
+    c_chirality: bool = False
 
 
 @dataclass
@@ -79,12 +81,15 @@ def clone_cfg(cfg):
 
 
 @st.cache_resource
-def load_model(selected_model_type):
+def load_model(selected_model_type, config_only=False):
     """Load model and config for selected model type."""
-    # Hidden for now to keep the app surface small:
-    # - Flow Liquid
-    # - SEMLA Fast
-    if selected_model_type == "Flow Matching":
+    if selected_model_type == "Flow Matching v0.2.0":
+        config_path = ROOT / "scripts/conf/loqi/loqi_flow.yaml"
+        ckpt_path = ROOT / "data/loqi_flow_v0.2.0.ckpt"
+        if not ckpt_path.is_file() and not config_only:
+            from loqi.registry import checkpoint_path
+            ckpt_path = checkpoint_path("loqi_flow_v0.2.0")
+    elif selected_model_type == "Flow Matching":
         config_path = ROOT / "scripts/conf/loqi/loqi_flow.yaml"
         ckpt_path = ROOT / "data/loqi_flow.ckpt"
     else:
@@ -92,12 +97,16 @@ def load_model(selected_model_type):
         ckpt_path = ROOT / "data/loqi.ckpt"
 
     cfg = OmegaConf.load(config_path)
-    cfg.data.dataset_root = str(ROOT / "data/chembl3d_stereo")
+    dataset_root = ROOT / "data/chembl3d_stereo"
+    cfg.data.dataset_root = str(dataset_root)
+    cfg.sample.node_distribution = str(dataset_root / "processed/train_n_h.pickle")
     if cfg.evaluation.energy_metrics_args is None:
         cfg.evaluation.energy_metrics_args = OmegaConf.create({})
     cfg.evaluation.energy_metrics_args.model_path = str(
         ROOT / "src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt"
     )
+    if config_only:
+        return None,cfg
     batch_preprocessor = BatchPreProcessor(cfg.data.aug_rotations, cfg.data.scale_coords)
 
     model = Graph3DInterpolantModel.load_from_checkpoint(
@@ -204,13 +213,17 @@ def build_sidebar_config() -> SidebarConfig:
         key="selected_model_type",
         on_change=_sync_postprocess_default,
     )
+    c_chirality = st.sidebar.checkbox(
+        'c_chirality (carbon-only R/S conditioning)', value=False,
+        help='Enable for legacy checkpoints. Only four-neighbor carbon centers get R/S edges; E/Z is unchanged.',
+    )
     postprocess_mode = st.sidebar.selectbox(
         "Postprocessing",
         [POSTPROCESS_NONE, POSTPROCESS_OPT, POSTPROCESS_OPT_IRMSD],
         key="postprocess_mode",
     )
 
-    if model_type == "Flow Matching":
+    if model_type in {"Flow Matching v0.2.0", "Flow Matching"}:
         n_steps = st.sidebar.slider("Sampling Steps", min_value=1, max_value=100, value=25)
     else:
         n_steps = 25
@@ -241,6 +254,7 @@ def build_sidebar_config() -> SidebarConfig:
         opt_fmax=float(opt_fmax),
         opt_max_nstep=int(opt_max_nstep),
         irmsd_rthr=float(irmsd_rthr),
+        c_chirality=bool(c_chirality),
     )
 
 
@@ -434,12 +448,14 @@ if generate_button and smiles:
         run_cfg = clone_cfg(base_cfg)
         run_cfg = set_cfg_timesteps(run_cfg, sidebar_cfg.n_steps)
 
-    with st.spinner(f"Generating {n_confs} conformers ({sidebar_cfg.n_steps} steps)..."):
+    generation_message=f"Generating {n_confs} conformers ({sidebar_cfg.n_steps} steps)..."
+    with st.spinner(generation_message):
         generation_batchsize = int(
             getattr(run_cfg.data, "inference_batch_size", getattr(run_cfg.data, "batch_size", n_confs))
         )
         generated_mols, reference_mols, gen_time_per_structure_s, error = generate_conformers_batch(
-            smiles, model, run_cfg, n_confs, generation_batch_size=generation_batchsize
+            smiles, model, run_cfg, n_confs, generation_batch_size=generation_batchsize,
+            c_chirality=sidebar_cfg.c_chirality,
         )
 
     if error:

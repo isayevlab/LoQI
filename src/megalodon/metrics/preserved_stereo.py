@@ -1,6 +1,7 @@
 from typing import Dict, List, Optional, Tuple
 
 from rdkit import Chem
+from megalodon.data.stereo import is_supported_tetrahedral_center
 
 
 def prepare_mol_for_conformer_eval(mol: Chem.Mol, assign_from_3d: bool = False) -> Optional[Chem.Mol]:
@@ -25,7 +26,7 @@ def get_stereochemistry_descriptor(mol: Chem.Mol) -> Tuple[str, str, str]:
     """Generate stereochemistry descriptor for a molecule."""
     rs_descriptor = []
     for atom in mol.GetAtoms():
-        if atom.HasProp('_CIPCode'):
+        if is_supported_tetrahedral_center(atom) and atom.HasProp('_CIPCode'):
             rs_descriptor.append(atom.GetProp('_CIPCode'))
 
     inv_rs_descriptor = ''.join(['R' if i == 'S' else 'S' for i in rs_descriptor])

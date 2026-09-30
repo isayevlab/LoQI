@@ -86,7 +86,7 @@ def render_molecule_svg(smiles: str, width: int = 900, height: int = 320) -> Opt
     return drawer.GetDrawingText()
 
 
-def mol_to_torch_geometric_simple(mol, smiles):
+def mol_to_torch_geometric_simple(mol, smiles, *, c_chirality=False):
     """
     Convert RDKit molecule to PyTorch Geometric Data object with stereochemistry edges.
     
@@ -121,7 +121,8 @@ def mol_to_torch_geometric_simple(mol, smiles):
     # Add stereochemistry edges (CRITICAL for LoQI model!)
     chi_bonds = [7, 8]  # R/S stereochemistry edge types
     ez_bonds = {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6}  # E/Z edge types
-    edge_index, edge_attr = add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index, edge_attr, from_3D=True)
+    edge_index, edge_attr = add_stereo_bonds(mol, chi_bonds, ez_bonds, edge_index, edge_attr,
+                                           from_3D=True, c_chirality=c_chirality)
     
     return Data(
         x=atom_types,
@@ -144,6 +145,7 @@ def generate_conformers_batch(
         atom_aware_batching=None,
         shuffle=None,
         target_molecule_size=None,
+        c_chirality=False,
 ):
     """
     Generate multiple conformers for a given SMILES using the LoQI model.
@@ -202,7 +204,7 @@ def generate_conformers_batch(
         data_list = []
         reference_mols = []
         for _ in range(n_confs):
-            data = mol_to_torch_geometric_simple(mol, smiles)
+            data = mol_to_torch_geometric_simple(mol, smiles, c_chirality=c_chirality)
             data_list.append(data)
             reference_mols.append(Chem.Mol(mol))  # Copy of original molecule for reference
 

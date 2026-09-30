@@ -30,7 +30,7 @@ def is_valid(mol, verbose=False):
     Returns:
         bool: True if valid, otherwise False.
     """
-    if mol is None:
+    if mol is None or mol.GetNumAtoms() == 0:
         return False
 
     try:
@@ -67,20 +67,20 @@ def collect_geometry(pairs, compute_function):
     results = []
 
     for idx, pair in enumerate(pairs):
-        # try:
-            if is_valid(pair[0]) and is_valid(pair[1]):
-                init = Chem.Mol(pair[0])
-                Chem.SanitizeMol(init)
-                opt = Chem.Mol(pair[1])
-                Chem.SanitizeMol(opt)
-                result = compute_function((init, opt))
-                values = torch.cat([torch.tensor(v[0]) for v in result.values()])
-                if torch.isnan(values.sum()):
-                    print(f"Skipping molecule {idx} due to invalid result.")
-                    continue
-                results.append(result)
-        # except Exception:
-        #     continue  # Skip invalid or problematic pairs
+        if is_valid(pair[0]) and is_valid(pair[1]):
+            init = Chem.Mol(pair[0])
+            opt = Chem.Mol(pair[1])
+            result = compute_function((init, opt))
+            # Small molecules legitimately have no angles or torsions. They
+            # contribute no observations, not a fabricated zero difference.
+            result = {k: v for k, v in result.items() if len(v[0]) and v[1] > 0}
+            if not result:
+                continue
+            values = torch.cat([torch.as_tensor(v[0]) for v in result.values()])
+            if not torch.isfinite(values).all():
+                print(f"Skipping molecule {idx} due to invalid result.")
+                continue
+            results.append(result)
 
     for result in results:
         for key, (diff_list, count) in result.items():
@@ -129,6 +129,8 @@ def compute_distance(pairs, agg_idx, compute_function):
     agg_res = aggregate_dict(result_dict, agg_idx)
 
     total_count = sum(v[1] for v in agg_res.values())
+    if total_count == 0:
+        return float("nan")  # No measurement; excluded from cross-rank averaging.
     weights = {k: v[1] / total_count for k, v in agg_res.items()}
 
     res_distance = sum(weights[k] * np.mean(agg_res[k][0]) for k in agg_res)
@@ -147,7 +149,7 @@ def prepare_for_aimnet(rdkit_molecules, device="cpu"):
         dict: AIMNet2 input tensors.
     """
     coord = [mol.GetConformer().GetPositions().tolist() for mol in rdkit_molecules]
-    max_n_atoms = max(len(c) for c in coord)
+    max_n_atoms = max((len(c) for c in coord), default=0)
 
     coordinates = torch.zeros((len(rdkit_molecules), max_n_atoms, 3), device=device)
     atoms = torch.full((len(rdkit_molecules), max_n_atoms), 0, device=device, dtype=torch.long)
@@ -184,8 +186,10 @@ def prepare_for_aimnet_chunked(rdkit_molecules, device="cpu", chunked=True, min_
             - list of lists: Indices of molecules in the original list corresponding to each batch.
     """
 
+    if not rdkit_molecules:
+        return [], []
     if not chunked:
-        return [prepare_for_aimnet(rdkit_molecules, device)], [list(range(len(rdkit_molecules)))]
+        return [list(range(len(rdkit_molecules)))], [prepare_for_aimnet(rdkit_molecules, device)]
 
     # Get the number of atoms in each molecule
     idx2num = [(idx, mol.GetNumAtoms()) for idx, mol in enumerate(rdkit_molecules)]
@@ -315,6 +319,14 @@ class MoleculeAIMNet2Metrics:
             assert len(molecules) == len(reference_molecules)
             reference_molecules = [mol for mol, val in zip(reference_molecules, valid) if val]
 
+        if not valid_molecules:
+            metrics = self.empty_values(self.opt_metrics, reference_molecules is not None)
+            if return_molecules:
+                if self.opt_metrics:
+                    return metrics, [], [], torch.empty(0, device=self.device, dtype=torch.double)
+                return metrics, []
+            return metrics
+
         aimnet2_idxs, aimnet2_chunks = prepare_for_aimnet_chunked(valid_molecules, device=self.device)
 
 
@@ -378,6 +390,8 @@ class MoleculeAIMNet2Metrics:
             Tuple[torch.Tensor, torch.Tensor]: Energy and forces tensors.
         """
         coords = aimnet2_batch["coord"]
+        if len(coords) == 0:
+            return coords.new_empty((0,), dtype=torch.double), torch.empty_like(coords)
         total_energy, total_forces = [], []
 
         for start_idx in range(0, len(coords), self.batchsize):
@@ -400,6 +414,10 @@ class MoleculeAIMNet2Metrics:
             energy (torch.Tensor): Initial energy values.
             metrics (dict): Dictionary to store metrics.
         """
+        if not valid_molecules:
+            metrics.update(self.empty_values(True, ref_energy is not None))
+            return [], [], torch.empty_like(energy)
+
         opt_molecules = deepcopy(valid_molecules)
         opt_energy = torch.zeros_like(energy)
         opt_converged = torch.zeros_like(energy, dtype=torch.long)
@@ -463,6 +481,25 @@ class MoleculeAIMNet2Metrics:
             metrics["opt_min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / len(valid_molecules)
             metrics["opt_better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / len(valid_molecules)
         return valid_molecules, opt_molecules, opt_energy
+
+    @staticmethod
+    def empty_values(opt_metrics=False, has_reference=False):
+        """Same keys as a populated evaluation, with unavailable values as NaN.
+
+        Stable keys let every DDP rank participate in the same reductions.
+        Missing measurements must not look like perfect (zero-error) results.
+        """
+        keys = (["mean_relative_energy", "median_relative_energy"] if has_reference
+                else ["avg_max_forces", "median_max_forces"])
+        if opt_metrics:
+            keys += ["opt_converged", "opt_steps", "preserved_topology",
+                     "opt_avg_energy_drop", "opt_median_energy_drop",
+                     "opt_bond_lengths_diff", "opt_bond_angles_diff",
+                     "opt_dihedrals_diff", "opt_total_time"]
+            if has_reference:
+                keys += ["opt_median_relative_energy", "opt_min_conformers",
+                         "opt_better_min_conformers"]
+        return dict.fromkeys(keys, float("nan"))
 
     @staticmethod
     def default_values():

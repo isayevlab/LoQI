@@ -28,6 +28,11 @@ class ModelEntry:
 
 
 MODELS: dict[str, ModelEntry] = {
+    "loqi_flow_v0.2.0": ModelEntry(
+        url="https://drive.usercontent.google.com/download?id=16w8tv0zy06OdCQLQw28YJyk83-p0F0Q5&export=download&confirm=t",
+        sha256="681a633695af58c88a73b82483f1a9b3f6552779f39f9da337c8db73eee93496",
+        config="loqi_flow.yaml",
+    ),
     "loqi": ModelEntry(
         url="https://ndownloader.figshare.com/files/62280784",
         sha256="5ebf59836216a4249f5d856c6f3c750d86f9651acfb8745640f13ffaaeb0c007",

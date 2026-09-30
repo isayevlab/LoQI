@@ -135,15 +135,19 @@ def seed_everything(seed: int) -> None:
 
 
 def iter_sampled_batches(
-    loaded: LoadedModel, loader: DataLoader, *, steps: int | None = None
+    loaded: LoadedModel, loader: DataLoader, *, steps: int | None = None,
 ) -> Iterator[tuple[Batch, list[np.ndarray]]]:
     """Yield each graph batch and its sampled coordinate arrays in batch order.
 
     Each molecule has an ``(n_atoms, 3)`` array. ``steps`` defaults to the model configuration.
     """
+    if loaded is None:
+        raise ValueError('A model is required for neural sampling')
     steps = loaded.default_steps if steps is None else int(steps)
     model = loaded.model
     for batch in loader:
+        if model is None:raise ValueError('A model is required for neural sampling')
+        for mol in batch.mol:mol.SetProp('loqi_generator','loqi')
         batch = batch.to(model.device)
         sample = model.sample(batch=batch, timesteps=steps, pre_format=True)
         yield batch, convert_coords_to_np(sample)
@@ -159,12 +163,16 @@ def generate_conformers(
     steps: int | None = None,
     add_hs: bool = True,
     batch_atoms: int | None = None,
+    c_chirality: bool = False,
 ) -> list[Chem.Mol]:
     """Sample conformers and return one RDKit molecule per input SMILES, in input order.
 
     Each result contains up to ``n_conformers`` conformers with consecutive IDs.
     Non-finite samples are omitted and counted in the ``loqi_failed`` property.
     Hydrogens are explicit unless ``add_hs=False``. Invalid inputs raise ``ValueError``.
+    All molecule sizes use the neural model; there is no RDKit fallback.
+    ``c_chirality=True`` restricts R/S conditioning to four-neighbor carbon
+    centers for legacy checkpoints; E/Z conditioning and input stereo are unchanged.
 
     ``model`` accepts a registry name, checkpoint path, or ``LoadedModel``. ``device``
     applies when loading a model. Reuse a loaded model for repeated calls.
@@ -181,11 +189,13 @@ def generate_conformers(
         raise ValueError("n_conformers must be at least 1.")
 
     seed_everything(seed)
-    loaded = model if isinstance(model, LoadedModel) else load_model(model, device=device)
 
     with featurize.legacy_stereo_perception():
         mols = [featurize.prepare_molecule(smi, add_hs=add_hs)[0] for smi in smiles_list]
-        data_list = featurize.mols_to_data_list(mols, n_conformers, use_3d_input=False, use_stereo_bonds=True)
+        data_list = featurize.mols_to_data_list(mols, n_conformers, use_3d_input=False, use_stereo_bonds=True,
+                                              c_chirality=c_chirality)
+
+    loaded = model if isinstance(model, LoadedModel) else load_model(model, device=device)
 
     if batch_atoms is None:
         reference_batch_size = loaded.default_batch_size
@@ -212,5 +222,6 @@ def generate_conformers(
     for mol, coords, failed in zip(mols, coords_per_mol, n_failed, strict=True):
         out = featurize.conformers_to_mol(mol, coords)
         out.SetIntProp("loqi_failed", failed)
+        out.SetProp('loqi_generator','loqi')
         results.append(out)
     return results

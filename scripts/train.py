@@ -16,6 +16,7 @@
 
 import os
 import logging
+import time
 from pathlib import Path
 
 import torch
@@ -103,11 +104,15 @@ def main(cfg: DictConfig) -> None:
     )
     logger.log_hyperparams(cfg)
 
+    load_started = time.perf_counter()
+    logging.info("Loading datasets (rank %s)", os.environ.get("RANK", os.environ.get("LOCAL_RANK", "0")))
     datamodule = MoleculeDataModule(cfg.data.dataset_root,
                                     cfg.data.processed_folder,
                                     cfg.data.batch_size,
                                     cfg.data.data_loader_type,
-                                    cfg.data.inference_batch_size)
+                                    cfg.data.inference_batch_size,
+                                    train_size_sampling=cfg.data.get("train_size_sampling"))
+    logging.info("Datasets loaded in %.1fs", time.perf_counter() - load_started)
 
     lr_monitor = LearningRateMonitor(logging_interval="step")
 
@@ -135,6 +140,8 @@ def main(cfg: DictConfig) -> None:
         save_on_train_epoch_end=True,
         filename="best_train-{epoch}-{step}",
     )
+    stats_started = time.perf_counter()
+    logging.info("Loading evaluation statistics")
     if cfg.evaluation.type == "molecules":
         energy_metrics_args = OmegaConf.to_container(cfg.evaluation.energy_metrics_args,
                                                  resolve=True) if cfg.evaluation.energy_metrics_args is not None else None
@@ -174,6 +181,7 @@ def main(cfg: DictConfig) -> None:
         )
     else: 
         raise NotImplementedError
+    logging.info("Evaluation statistics loaded in %.1fs", time.perf_counter() - stats_started)
 
     if 'num_nodes' in cfg.train:
         num_nodes = cfg.train.num_nodes
@@ -182,6 +190,7 @@ def main(cfg: DictConfig) -> None:
 
     trainer = pl.Trainer(
         max_epochs=cfg.train.n_epochs,
+        fast_dev_run=OmegaConf.select(cfg, "train.fast_dev_run", default=False),
         logger=logger,
         callbacks=[lr_monitor, evaluation_callback, last_checkpoint_callback,
                    best_checkpoint_callback, train_loss_checkpoint_callback],
@@ -196,10 +205,9 @@ def main(cfg: DictConfig) -> None:
         num_sanity_val_steps=0
     )
 
-    train_loader = datamodule.train_dataloader()
-    val_loader = datamodule.val_dataloader()
-    trainer.fit(model=pl_module, train_dataloaders=train_loader, val_dataloaders=val_loader,
-                ckpt_path=ckpt)
+    # Create loaders after DDP initialization so the size sampler receives the
+    # real rank/world size and handles distributed sharding exactly once.
+    trainer.fit(model=pl_module, datamodule=datamodule, ckpt_path=ckpt)
 
 
 if __name__ == "__main__":

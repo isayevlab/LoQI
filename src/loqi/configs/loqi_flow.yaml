@@ -14,6 +14,12 @@ data:
   inference_batch_size: 150
   removed_h: False
   data_loader_type: "midi"
+  train_size_sampling:
+    small_max_nodes: 10
+    small_factor: 5
+    large_min_nodes: 110
+    large_factor: 5
+    seed: 42
   aug_rotations: False
   scale_coords: &scale_coords 1.0
 
@@ -21,7 +27,7 @@ loss:
   use_loss_clamps: True
   loss_clamp_epoch_threshold: 10
   loss_clamps:
-    ts_coord: 1.0
+    x: 2.0
   variables:
     - variable_name: 'x'
       loss_scale: 1.0
