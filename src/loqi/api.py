@@ -135,19 +135,24 @@ def seed_everything(seed: int) -> None:
 
 
 def iter_sampled_batches(
-    loaded: LoadedModel, loader: DataLoader, *, steps: int | None = None,
+    loaded: LoadedModel,
+    loader: DataLoader,
+    *,
+    steps: int | None = None,
 ) -> Iterator[tuple[Batch, list[np.ndarray]]]:
     """Yield each graph batch and its sampled coordinate arrays in batch order.
 
     Each molecule has an ``(n_atoms, 3)`` array. ``steps`` defaults to the model configuration.
     """
     if loaded is None:
-        raise ValueError('A model is required for neural sampling')
+        raise ValueError("A model is required for neural sampling")
     steps = loaded.default_steps if steps is None else int(steps)
     model = loaded.model
     for batch in loader:
-        if model is None:raise ValueError('A model is required for neural sampling')
-        for mol in batch.mol:mol.SetProp('loqi_generator','loqi')
+        if model is None:
+            raise ValueError("A model is required for neural sampling")
+        for mol in batch.mol:
+            mol.SetProp("loqi_generator", "loqi")
         batch = batch.to(model.device)
         sample = model.sample(batch=batch, timesteps=steps, pre_format=True)
         yield batch, convert_coords_to_np(sample)
@@ -192,8 +197,9 @@ def generate_conformers(
 
     with featurize.legacy_stereo_perception():
         mols = [featurize.prepare_molecule(smi, add_hs=add_hs)[0] for smi in smiles_list]
-        data_list = featurize.mols_to_data_list(mols, n_conformers, use_3d_input=False, use_stereo_bonds=True,
-                                              c_chirality=c_chirality)
+        data_list = featurize.mols_to_data_list(
+            mols, n_conformers, use_3d_input=False, use_stereo_bonds=True, c_chirality=c_chirality
+        )
 
     loaded = model if isinstance(model, LoadedModel) else load_model(model, device=device)
 
@@ -222,6 +228,6 @@ def generate_conformers(
     for mol, coords, failed in zip(mols, coords_per_mol, n_failed, strict=True):
         out = featurize.conformers_to_mol(mol, coords)
         out.SetIntProp("loqi_failed", failed)
-        out.SetProp('loqi_generator','loqi')
+        out.SetProp("loqi_generator", "loqi")
         results.append(out)
     return results

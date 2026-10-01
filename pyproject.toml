@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "loqi"
-version = "0.1.0"
+version = "1.1.0"
 description = "LoQI: scalable low-energy molecular conformer generation with quantum mechanical accuracy"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,7 +23,7 @@ classifiers = [
 dependencies = [
     "torch>=2.8",
     "torch_geometric>=2.6",
-    "rdkit>=2025.3",
+    "rdkit>=2026.3.1",
     "lightning>=2.4",
     "omegaconf>=2.3",
     "einops>=0.8",

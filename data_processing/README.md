@@ -137,6 +137,12 @@ all conformers and observed stereochemistry classes. The selected 3D geometry
 is combined with the matching size-grouped SDF topology and encoded with the
 same E/Z and tetrahedral stereo edges used by the inference app.
 
+Preprocessing uses modern CIP neighbor ordering (RDKit >= 2026.03.1), including
+lowercase r/s centers. The lowest-priority neighbor is the reference, and local
+CW/CCW parity orients the triangle. Only centers with four explicit neighbors
+are encoded. CIP resource limits warn and omit unresolved centers, not molecules.
+The preprocessing manifest records the encoding and RDKit version.
+
 Run the small end-to-end smoke test first:
 
 ```bash

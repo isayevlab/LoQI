@@ -28,9 +28,9 @@ class ModelEntry:
 
 
 MODELS: dict[str, ModelEntry] = {
-    "loqi_flow_v0.2.0": ModelEntry(
-        url="https://drive.usercontent.google.com/download?id=16w8tv0zy06OdCQLQw28YJyk83-p0F0Q5&export=download&confirm=t",
-        sha256="681a633695af58c88a73b82483f1a9b3f6552779f39f9da337c8db73eee93496",
+    "loqi_flow_v1.1.0": ModelEntry(
+        url="https://drive.usercontent.google.com/download?id=1UOxDPX6u0n6Ij6mvqaT6PVmEREeBjJcS&export=download&confirm=t",
+        sha256="0b2acf46d71a84c963d66711ba29d04f788cfd2aa681989236f797de2eb5f9a2",
         config="loqi_flow.yaml",
     ),
     "loqi": ModelEntry(

@@ -50,7 +50,9 @@ def legacy_stereo_perception(enabled: bool = True) -> Iterator[None]:
         Chem.SetUseLegacyStereoPerception(previous)
 
 
-def mol_to_data(mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_stereo_bonds: bool = True, c_chirality: bool = False) -> Data:
+def mol_to_data(
+    mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_stereo_bonds: bool = True, c_chirality: bool = False
+) -> Data:
     """Build an inference graph from an RDKit molecule with explicit hydrogens.
 
     Sanitize and kekulize the molecule in place. Use its first conformer's coordinates
@@ -74,7 +76,12 @@ def mol_to_data(mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_s
 
     if use_stereo_bonds:
         edge_index, edge_attr = add_stereo_bonds(
-            mol, list(CHIRAL_EDGE_TYPES), EZ_EDGE_TYPES, edge_index, edge_attr, from_3D=use_3d_input,
+            mol,
+            list(CHIRAL_EDGE_TYPES),
+            EZ_EDGE_TYPES,
+            edge_index,
+            edge_attr,
+            from_3D=use_3d_input,
             c_chirality=c_chirality,
         )
 
@@ -91,7 +98,12 @@ def mol_to_data(mol: Chem.Mol, smiles: str, *, use_3d_input: bool = False, use_s
 
 
 def mols_to_data_list(
-    mols: Sequence[Chem.Mol], n_confs: int = 1, *, use_3d_input: bool = False, use_stereo_bonds: bool = True, c_chirality: bool = False
+    mols: Sequence[Chem.Mol],
+    n_confs: int = 1,
+    *,
+    use_3d_input: bool = False,
+    use_stereo_bonds: bool = True,
+    c_chirality: bool = False,
 ) -> list[Data]:
     """Create ``n_confs`` graph copies per molecule.
 
@@ -104,7 +116,10 @@ def mols_to_data_list(
         for _ in range(n_confs):
             copy = Chem.Mol(mol)
             data = mol_to_data(
-                copy, Chem.MolToSmiles(copy), use_3d_input=use_3d_input, use_stereo_bonds=use_stereo_bonds,
+                copy,
+                Chem.MolToSmiles(copy),
+                use_3d_input=use_3d_input,
+                use_stereo_bonds=use_stereo_bonds,
                 c_chirality=c_chirality,
             )
             data.mol_idx = mol_idx

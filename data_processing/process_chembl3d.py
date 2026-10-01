@@ -5,7 +5,8 @@ For every ChEMBL3D ``mol_id``, this script selects the conformer with the
 lowest absolute energy across all conformers and observed stereochemistry
 classes. It combines that conformer's coordinates with its matching SDF
 topology, infers stereochemistry from the selected 3D geometry, and writes the
-standard LoQI train/validation/test PyG datasets and statistics.
+standard LoQI train/validation/test PyG datasets and statistics. Tetrahedral
+edges use the same modern CIP ordering as the app and sampling API.
 """
 
 from __future__ import annotations
@@ -22,8 +23,9 @@ from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
 import numpy as np
-from rdkit import Chem
+from rdkit import Chem, rdBase
 from tqdm import tqdm
+from megalodon.data.stereo import STEREO_ENCODING
 
 from utils_data import (
     add_stereo_bonds,
@@ -305,7 +307,11 @@ def _records_by_group(
 
 
 def _convert_record(topology: Chem.Mol, coords: np.ndarray, mol_id: str):
-    """Convert one topology/coordinate pair using LoQI's existing helpers."""
+    """Encode the selected 3D geometry with the shared modern-CIP stereo rule.
+
+    R/S and lowercase r/s centers require four explicit neighbors. Known CIP
+    resource limits warn and omit only unresolved centers, retaining the graph.
+    """
     topology = Chem.Mol(topology)
     Chem.SanitizeMol(topology)
     Chem.Kekulize(topology, clearAromaticFlags=True)
@@ -318,6 +324,7 @@ def _convert_record(topology: Chem.Mol, coords: np.ndarray, mol_id: str):
         edge_index=graph.edge_index,
         edge_attr=graph.edge_attr,
         from_3D=True,
+        encoding=STEREO_ENCODING,
     )
     return graph
 
@@ -469,6 +476,8 @@ def process(args: argparse.Namespace) -> None:
 
     release_manifest = dataset_dir / "release_manifest.json"
     provenance = {
+        "stereo_encoding": STEREO_ENCODING,
+        "rdkit_version": rdBase.rdkitVersion,
         "dataset_dir": str(dataset_dir),
         "release_manifest": str(release_manifest) if release_manifest.is_file() else None,
         "release_manifest_sha256": file_sha256(release_manifest) if release_manifest.is_file() else None,

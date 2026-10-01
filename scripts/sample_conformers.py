@@ -24,7 +24,7 @@ from megalodon.metrics.molecule_metrics_aimnet2 import MoleculeAIMNet2Metrics
 Chem.SetUseLegacyStereoPerception(True)
 
 BUNDLED_AIMNET2_MODEL = files("megalodon").joinpath("metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt")
-RELEASE_CHECKPOINT = Path(__file__).resolve().parents[1] / "data/loqi_flow_v0.2.0.ckpt"
+RELEASE_CHECKPOINT = Path(__file__).resolve().parents[1] / "data/loqi_flow_v1.1.0.ckpt"
 
 
 def optimize_with_aimnet(
@@ -97,8 +97,11 @@ def main():
     parser.add_argument(
         "--ckpt",
         type=str,
-        default=str(RELEASE_CHECKPOINT) if RELEASE_CHECKPOINT.is_file() else "loqi_flow_v0.2.0",
-        help="Checkpoint path or registered model name (loqi, loqi_flow, loqi_flow_v0.2.0). Defaults to v0.2.0; downloaded if not available locally.",
+        default=str(RELEASE_CHECKPOINT) if RELEASE_CHECKPOINT.is_file() else "loqi_flow_v1.1.0",
+        help=(
+            "Checkpoint path or registered model name (loqi, loqi_flow, loqi_flow_v1.1.0). "
+            "Defaults to v1.1.0; downloaded if not available locally."
+        ),
     )
     parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--n_confs", type=int, default=1)
@@ -181,16 +184,21 @@ def main():
         ),
     )
     parser.add_argument(
-        '--c-chirality', '--c_chirality', dest='c_chirality', action='store_true',
-        help='Legacy checkpoint option: encode R/S edges only for four-neighbor carbon centers; E/Z unchanged.',
+        "--c-chirality",
+        "--c_chirality",
+        dest="c_chirality",
+        action="store_true",
+        help="Legacy checkpoint option: encode R/S edges only for four-neighbor carbon centers; E/Z unchanged.",
     )
     args = parser.parse_args()
 
     mols, validation_errors = load_molecules(args.input, add_hs=args.add_hs)
-    for err in validation_errors:print(f"WARNING: {err}")
-    if not mols:raise ValueError('No valid molecules left after validation/revalidation checks.')
-    loaded=load_model(args.ckpt,config=args.config)
-    cfg=loaded.config
+    for err in validation_errors:
+        print(f"WARNING: {err}")
+    if not mols:
+        raise ValueError("No valid molecules left after validation/revalidation checks.")
+    loaded = load_model(args.ckpt, config=args.config)
+    cfg = loaded.config
     cfg_opt_params = getattr(getattr(cfg.evaluation, "energy_metrics_args", None), "opt_params", None)
     opt_fmax = float(args.opt_fmax) if args.opt_fmax is not None else float(getattr(cfg_opt_params, "fmax", 0.05))
     opt_max_nstep = (

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a 3D SDF file to the standard LoQI training dataset format."""
+"""Convert a 3D SDF to LoQI training data using shared modern-CIP stereo edges."""
 
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ def read_sdf_graphs(
     sdf_path: Path,
     limit_molecules: int | None = None,
 ) -> tuple[list, int]:
-    """Read one 3D conformer per SDF record and convert it to a LoQI graph."""
+    """Read each 3D record and use ChEMBL3D's modern-CIP graph conversion."""
     graphs = []
     failed_conversions = 0
     supplier = Chem.SDMolSupplier(str(sdf_path), removeHs=False, sanitize=False)

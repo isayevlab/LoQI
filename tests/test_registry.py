@@ -14,7 +14,7 @@ PAYLOAD = b"not a real checkpoint\n" * 4096
 
 
 def test_models_table_is_well_formed():
-    assert set(MODELS) == {"loqi", "loqi_flow", "loqi_flow_v0.2.0"}
+    assert set(MODELS) == {"loqi", "loqi_flow", "loqi_flow_v1.1.0"}
     for entry in MODELS.values():
         assert re.fullmatch(r"[0-9a-f]{64}", entry.sha256)
         assert entry.url.startswith(("https://ndownloader.figshare.com/files/", "https://drive.usercontent.google.com/download?"))

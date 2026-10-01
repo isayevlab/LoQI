@@ -40,7 +40,7 @@ POSTPROCESS_OPT_IRMSD = "optimization + irmsd unique set selection"
 
 EV_TO_KCAL_PER_MOL = 23.060547830619026
 MODEL_OPTIONS = [
-    "Flow Matching v0.2.0",
+    "Flow Matching v1.1.0",
     "Diffusion",
     "Flow Matching",
 ]
@@ -83,12 +83,12 @@ def clone_cfg(cfg):
 @st.cache_resource
 def load_model(selected_model_type, config_only=False):
     """Load model and config for selected model type."""
-    if selected_model_type == "Flow Matching v0.2.0":
+    if selected_model_type == "Flow Matching v1.1.0":
         config_path = ROOT / "scripts/conf/loqi/loqi_flow.yaml"
-        ckpt_path = ROOT / "data/loqi_flow_v0.2.0.ckpt"
+        ckpt_path = ROOT / "data/loqi_flow_v1.1.0.ckpt"
         if not ckpt_path.is_file() and not config_only:
             from loqi.registry import checkpoint_path
-            ckpt_path = checkpoint_path("loqi_flow_v0.2.0")
+            ckpt_path = checkpoint_path("loqi_flow_v1.1.0")
     elif selected_model_type == "Flow Matching":
         config_path = ROOT / "scripts/conf/loqi/loqi_flow.yaml"
         ckpt_path = ROOT / "data/loqi_flow.ckpt"
@@ -223,7 +223,7 @@ def build_sidebar_config() -> SidebarConfig:
         key="postprocess_mode",
     )
 
-    if model_type in {"Flow Matching v0.2.0", "Flow Matching"}:
+    if model_type in {"Flow Matching v1.1.0", "Flow Matching"}:
         n_steps = st.sidebar.slider("Sampling Steps", min_value=1, max_value=100, value=25)
     else:
         n_steps = 25

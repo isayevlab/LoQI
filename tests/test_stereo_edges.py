@@ -4,8 +4,8 @@ import pytest
 from rdkit import Chem
 
 from loqi.featurize import CHIRAL_EDGE_TYPES, mol_to_data, prepare_molecule
-from megalodon.data.stereo import add_stereo_bonds
 from megalodon.data import stereo
+from megalodon.data.stereo import add_stereo_bonds
 
 
 def _chiral_edges(data):
@@ -78,21 +78,69 @@ def test_stereo_edges_are_invariant_to_atom_renumbering(smiles):
     assert reordered_edges == set(_chiral_edges(original))
 
 
-@pytest.mark.parametrize("smiles", [
-    "C[C@H](O)c1ccccc1", "C[C@@H](O)c1ccccc1",
-    "CC[P@](=O)(C)c1ccccc1", "CC[P@@](=O)(C)c1ccccc1",
-])
-def test_opt_in_encoding_preserves_pretrained_four_ligand_convention(smiles):
+@pytest.mark.parametrize("encoding", [None, "legacy_compatible"])
+@pytest.mark.parametrize(
+    "smiles",
+    [
+        "C[C@H](O)c1ccccc1",
+        "C[C@@H](O)c1ccccc1",
+        "CC[P@](=O)(C)c1ccccc1",
+        "CC[P@@](=O)(C)c1ccccc1",
+    ],
+)
+def test_default_encoding_preserves_pretrained_four_ligand_convention(smiles, encoding):
     mol, _ = prepare_molecule(smiles)
-    edges, types = add_stereo_bonds(mol, [7, 8], {}, from_3D=False, encoding="legacy_compatible")
+    options = {} if encoding is None else {"encoding": encoding}
+    edges, types = add_stereo_bonds(mol, [7, 8], {}, from_3D=False, **options)
     center = next(atom for atom in mol.GetAtoms() if atom.HasProp("_CIPCode"))
     neighbors = sorted(center.GetNeighbors(), key=lambda atom: int(atom.GetProp("_CIPRank")), reverse=True)
     a, b, c = [atom.GetIdx() for atom in neighbors[:3]]
     d = neighbors[-1].GetIdx()
     if center.GetProp("_CIPCode") == "S":
         a, b, c = c, b, a
-    expected = {(a,d,7),(b,d,7),(c,d,7),(d,a,7),(d,b,7),(d,c,7),(b,a,8),(c,b,8),(a,c,8)}
-    assert set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist())) == expected
+    expected = {(a, d, 7), (b, d, 7), (c, d, 7), (d, a, 7), (d, b, 7), (d, c, 7), (b, a, 8), (c, b, 8), (a, c, 8)}
+    assert set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist(), strict=True)) == expected
+
+
+def test_default_enantiomers_keep_observer_and_reverse_only_cycle():
+    results = []
+    for smiles in ("F[C@](Cl)(Br)I", "F[C@@](Cl)(Br)I"):
+        mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+        edges, types = add_stereo_bonds(mol, [7, 8], {}, from_3D=False)
+        triples = set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist(), strict=True))
+        # F (index 0) is the lowest-CIP ligand in both enantiomers.
+        assert {(a, b) for a, b, t in triples if t == 7} == {(0, 2), (2, 0), (0, 3), (3, 0), (0, 4), (4, 0)}
+        results.append({(a, b) for a, b, t in triples if t == 8})
+    assert results[0] == {(b, a) for a, b in results[1]}
+
+
+def test_previous_canonical_encoding_remains_explicit_opt_in():
+    mol = Chem.AddHs(Chem.MolFromSmiles("F[C@](Cl)(Br)I"))
+    edges, types = add_stereo_bonds(mol, [7, 8], {}, from_3D=False, encoding="canonical")
+    center = mol.GetAtomWithIdx(1)
+    assert center.GetProp("_CIPCode") == "S"
+    ranks = Chem.CanonicalRankAtoms(mol, breakTies=True, includeChirality=False)
+    a, b, c, d = sorted((n.GetIdx() for n in center.GetNeighbors()), key=lambda i: ranks[i])
+    expected = {(a, d, 7), (b, d, 7), (c, d, 7), (d, a, 7), (d, b, 7), (d, c, 7), (b, a, 8), (c, b, 8), (a, c, 8)}
+    assert set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist(), strict=True)) == expected
+
+
+@pytest.mark.parametrize("smiles", ["F[C@](Cl)(Br)I", "F[C@@](Cl)(Br)I"])
+def test_tied_legacy_ranks_do_not_invert_the_directed_triangle(smiles, monkeypatch):
+    mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
+    edges, types = add_stereo_bonds(Chem.Mol(mol), [7, 8], {}, from_3D=False)
+    expected = set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist(), strict=True))
+    assign = stereo._assign_stereochemistry
+
+    def assign_with_tied_ranks(mol, from_3d):
+        assign(mol, from_3d)
+        # Native order has Cl before Br; distinct descending CIP ranks have
+        # Br before Cl. Tying them swaps that pair without changing geometry.
+        mol.GetAtomWithIdx(2).SetProp("_CIPRank", mol.GetAtomWithIdx(3).GetProp("_CIPRank"))
+
+    monkeypatch.setattr(stereo, "_assign_stereochemistry", assign_with_tied_ranks)
+    edges, types = add_stereo_bonds(mol, [7, 8], {}, from_3D=False)
+    assert set(zip(edges[0].tolist(), edges[1].tolist(), types.tolist(), strict=True)) == expected
 
 
 def test_opt_in_encoding_also_skips_sulfoxide_enantiomers():
@@ -103,11 +151,14 @@ def test_opt_in_encoding_also_skips_sulfoxide_enantiomers():
 
 
 @pytest.mark.parametrize("encoding", ["canonical", "legacy_compatible"])
-@pytest.mark.parametrize("smiles", [
-    "Cl[P@TB17](Cl)(Cl)(Cl)Cl",
-    "F[P@OH9-](F)(F)(F)(F)F",
-    "O=C1O[I@SP1](O)c2ccccc21",
-])
+@pytest.mark.parametrize(
+    "smiles",
+    [
+        "Cl[P@TB17](Cl)(Cl)(Cl)Cl",
+        "F[P@OH9-](F)(F)(F)(F)F",
+        "O=C1O[I@SP1](O)c2ccccc21",
+    ],
+)
 def test_non_tetrahedral_centers_are_not_encoded_even_with_cip_label(smiles, encoding, monkeypatch):
     mol = Chem.AddHs(Chem.MolFromSmiles(smiles))
     assign = stereo._assign_stereochemistry
@@ -128,17 +179,23 @@ def test_non_tetrahedral_centers_are_not_encoded_even_with_cip_label(smiles, enc
 
 
 @pytest.mark.parametrize("encoding", ["canonical", "legacy_compatible"])
-@pytest.mark.parametrize("unsupported", [
-    "Cl[P@TB17](Cl)(Cl)(Cl)Cl",
-    "F[P@OH9-](F)(F)(F)(F)F",
-    "O=C1O[I@SP1](O)c2ccccc21",
-])
+@pytest.mark.parametrize(
+    "unsupported",
+    [
+        "Cl[P@TB17](Cl)(Cl)(Cl)Cl",
+        "F[P@OH9-](F)(F)(F)(F)F",
+        "O=C1O[I@SP1](O)c2ccccc21",
+    ],
+)
 def test_unsupported_centers_preserve_identity_and_supported_stereo(unsupported, encoding):
     mol = Chem.AddHs(Chem.MolFromSmiles(unsupported + ".C[S@](=O)c1ccccc1.C[C@H](O)F.F/C=C/F"))
     identity = Chem.MolToSmiles(mol)
     edges, types = add_stereo_bonds(
-        mol, [7, 8], {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6},
-        from_3D=False, encoding=encoding,
+        mol,
+        [7, 8],
+        {Chem.BondStereo.STEREOE: 5, Chem.BondStereo.STEREOZ: 6},
+        from_3D=False,
+        encoding=encoding,
     )
     unsupported_atoms = set(Chem.GetMolFrags(mol)[0])
     assert not unsupported_atoms.intersection(edges.flatten().tolist())
