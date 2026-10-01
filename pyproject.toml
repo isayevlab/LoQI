@@ -50,6 +50,8 @@ packages = ["src/megalodon", "src/loqi"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# App and preprocessing modules live in the source tree, not the installed wheel.
+pythonpath = [".", "src", "data_processing"]
 addopts = "-m 'not slow'"
 markers = ["slow: end-to-end tests that load the LoQI checkpoint"]
 
