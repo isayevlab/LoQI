@@ -137,7 +137,8 @@ class AdaptiveBatchSampler(DynamicBatchSampler):
 
             # Determine which indices to keep based on the max size
             max_index = torch.nonzero(srted <= max_size).max().item()
-            min_index = max(0, max_index - ebs)
+            # min_index = max(0, max_index - ebs)
+            min_index = max(0, max_index - ebs + 1)  # slice below is inclusive, so this yields ebs graphs
             indices_to_keep = set(argsort[min_index : max_index + 1].tolist())
 
             # Add additional indices if the effective batch size is not reached
