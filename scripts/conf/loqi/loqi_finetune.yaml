@@ -12,8 +12,8 @@ wandb_params:
 data:
   dataset_root: "/data/jarret/loqi/csd_loqi_data/dimers/csd_loqi_dimers_20k__dih-relax"
   processed_folder: "processed"
-  batch_size: &batch_size 32
-  inference_batch_size: 32
+  batch_size: &batch_size 8
+  inference_batch_size: 8
   removed_h: False
   data_loader_type: "adaptive"
   aug_rotations: True
@@ -117,7 +117,7 @@ evaluation:
   scale_coords: *scale_coords
   energy_metrics_args:
     model_path: src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt
-    batchsize: 32
+    batchsize: 8
     opt_metrics: True
     opt_params:
       fmax: 2e-3
