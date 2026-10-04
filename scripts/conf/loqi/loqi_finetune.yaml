@@ -1,6 +1,6 @@
-run_name: 'loqi_csd_dimer_ft_20k'
+run_name: 'loqi_csd_dimer_20k_ft'
 # outdir: /data/jarret/loqi/csd_train_outputs/csd_mono_finetune/debug
-outdir: /data/jarret/loqi/csd_train_outputs/csd_dimer_ft_20k
+outdir: /data/jarret/loqi/csd_train_outputs/csd_dimer_20k_ft
 # resume: /home/jarret/LoQI/data/loqi.ckpt
 resume: /data/jarret/loqi/csd_train_outputs/csd_mono_finetune_FIXED-PREPROCESS_FIXED-VAL/loqi_csd_mono_ft_FIXED-PREPROCESS_FIXED-VAL/checkpoints/best-epoch=345-step=1828438--opt_median_relative_energy=-1.960.ckpt
 ema: True
@@ -114,6 +114,7 @@ evaluation:
   compute_3D_metrics: True
   compute_energy_metrics: True
   compute_stereo_metrics: True
+  allow_fragments: True  # dimers are two fragments; otherwise all are rejected as invalid
   scale_coords: *scale_coords
   energy_metrics_args:
     model_path: src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt

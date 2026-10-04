@@ -19,7 +19,7 @@ from megalodon.metrics.aimnet2.pair_geometry import (
 from megalodon.metrics.preserved_stereo import prepare_mol_for_conformer_eval
 
 
-def is_valid(mol, verbose=False):
+def is_valid(mol, verbose=False, allow_fragments=False):
     """
     Validate a molecule for single fragment and successful sanitization.
 
@@ -44,7 +44,7 @@ def is_valid(mol, verbose=False):
             print(f"Sanitization failed: {e}")
         return False
 
-    if len(Chem.GetMolFrags(mol)) > 1:
+    if not allow_fragments and len(Chem.GetMolFrags(mol)) > 1:
         if verbose:
             print("Molecule has multiple fragments.")
         return False
@@ -52,7 +52,7 @@ def is_valid(mol, verbose=False):
     return True
 
 
-def collect_geometry(pairs, compute_function):
+def collect_geometry(pairs, compute_function, allow_fragments=False):
     """
     Compute geometry metrics for molecule pairs using a specified function.
 
@@ -67,7 +67,7 @@ def collect_geometry(pairs, compute_function):
     results = []
 
     for idx, pair in enumerate(pairs):
-        if is_valid(pair[0]) and is_valid(pair[1]):
+        if is_valid(pair[0], allow_fragments=allow_fragments) and is_valid(pair[1], allow_fragments=allow_fragments):
             init = Chem.Mol(pair[0])
             Chem.SanitizeMol(init)
             opt = Chem.Mol(pair[1])
@@ -122,7 +122,7 @@ def aggregate_dict(dct, agg_idx):
     return res
 
 
-def compute_distance(pairs, agg_idx, compute_function):
+def compute_distance(pairs, agg_idx, compute_function, allow_fragments=False):
     """
     Compute weighted average distance for geometry metrics.
 
@@ -134,7 +134,7 @@ def compute_distance(pairs, agg_idx, compute_function):
     Returns:
         float: Weighted average distance.
     """
-    result_dict = collect_geometry(pairs, compute_function)
+    result_dict = collect_geometry(pairs, compute_function, allow_fragments=allow_fragments)
     agg_res = aggregate_dict(result_dict, agg_idx)
 
     total_count = sum(v[1] for v in agg_res.values())
@@ -296,13 +296,14 @@ class MoleculeAIMNet2Metrics:
     """
 
     def __init__(self, model_path, batchsize, opt_metrics=False, device="cpu", opt_params=None,
-                 chunked=False):
+                 chunked=False, allow_fragments=False):
         self.model = Forces(load_aimnet2_module(model_path, device=device)).to(device).eval()
         self.opt_metrics = opt_metrics
         self.opt_params = opt_params or {}
         self.device = device
         self.batchsize = batchsize
         self.chunked = chunked
+        self.allow_fragments = allow_fragments  # e.g. dimers: keep multi-fragment molecules
 
     @torch.no_grad()
     def __call__(self, molecules, reference_molecules=None, return_molecules=False,
@@ -322,7 +323,7 @@ class MoleculeAIMNet2Metrics:
         """
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
-        valid = [is_valid(mol) for mol in molecules]
+        valid = [is_valid(mol, allow_fragments=self.allow_fragments) for mol in molecules]
         valid_molecules = [mol for mol, val in zip(molecules, valid) if val]
 
         if reference_molecules is not None:
@@ -471,9 +472,9 @@ class MoleculeAIMNet2Metrics:
 
         pairs = list(zip(valid_molecules, opt_molecules))
         ev2kcalpermol = 23.060547830619026
-        bond_diff = compute_distance(pairs, 1, compute_bond_lengths_diff)
-        angle_diff = compute_distance(pairs, 2, compute_bond_angles_diff)
-        torsion_diff = compute_distance(pairs, 3, compute_torsion_angles_diff)
+        bond_diff = compute_distance(pairs, 1, compute_bond_lengths_diff, self.allow_fragments)
+        angle_diff = compute_distance(pairs, 2, compute_bond_angles_diff, self.allow_fragments)
+        torsion_diff = compute_distance(pairs, 3, compute_torsion_angles_diff, self.allow_fragments)
 
         topology_mask = torch.tensor([check_topology_wrapper(mol) for mol in opt_molecules],
                                      dtype=torch.bool)
@@ -500,8 +501,8 @@ class MoleculeAIMNet2Metrics:
             metrics["opt_median_relative_energy"] = torch.median(
                 (opt_energy - ref_energy)[topology_mask]*ev2kcalpermol).item()
             
-            metrics["opt_min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / len(valid_molecules)
-            metrics["opt_better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / len(valid_molecules)
+            metrics["opt_min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / max(len(valid_molecules), 1)
+            metrics["opt_better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / max(len(valid_molecules), 1)
         return valid_molecules, opt_molecules, opt_energy, topology_mask
 
     @staticmethod

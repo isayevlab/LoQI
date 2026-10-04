@@ -104,6 +104,7 @@ class ConformerEvaluationCallback(pl.Callback):
             scale_coords=None,
             max_molecules=100,
             timesteps=100,
+            allow_fragments=False,
     ):
         super().__init__()
         self.full_atom_decoder = full_atom_decoder
@@ -123,6 +124,7 @@ class ConformerEvaluationCallback(pl.Callback):
         self.compute_energy_metrics = compute_energy_metrics
         self.energy_metrics_args = energy_metrics_args
         self.compute_stereo_metrics = compute_stereo_metrics
+        self.allow_fragments = allow_fragments
 
     def gather_default_values(self):
         """
@@ -162,7 +164,7 @@ class ConformerEvaluationCallback(pl.Callback):
             results["molecules"] = deepcopy(molecules)
         if self.compute_3D_metrics:
             mol_3d_metrics = Molecule3DMetrics(
-                self.dataset_info, device=device
+                self.dataset_info, device=device, allow_fragments=self.allow_fragments
             )
             mol_3d_res = mol_3d_metrics(molecules)
             results.update(mol_3d_res)
@@ -174,7 +176,8 @@ class ConformerEvaluationCallback(pl.Callback):
                 batchsize=self.energy_metrics_args["batchsize"],
                 opt_metrics=self.energy_metrics_args["opt_metrics"],
                 opt_params=self.energy_metrics_args["opt_params"],
-                device=device)
+                device=device,
+                allow_fragments=self.allow_fragments)
             energy_out = energy_metrics(
                 molecules, reference_molecules=reference_molecules,
                 return_molecules=return_optimized_molecules,

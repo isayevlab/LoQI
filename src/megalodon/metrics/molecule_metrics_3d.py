@@ -26,7 +26,7 @@ from megalodon.metrics.geometry import (
 )
 
 
-def is_valid(mol, verbose=False):
+def is_valid(mol, verbose=False, allow_fragments=False):
     """
     Check if a molecule is valid based on:
     1. It should consist of only one fragment.
@@ -54,7 +54,7 @@ def is_valid(mol, verbose=False):
             print(f"Sanitization failed: {e}")
         return False
 
-    if len(Chem.GetMolFrags(mol)) > 1:
+    if not allow_fragments and len(Chem.GetMolFrags(mol)) > 1:
         if verbose:
             print("Molecule has multiple fragments.")
         return False
@@ -62,7 +62,7 @@ def is_valid(mol, verbose=False):
     return True
 
 
-def collect_geometry(mols, compute_function, preserve_aromatic=True):
+def collect_geometry(mols, compute_function, preserve_aromatic=True, allow_fragments=False):
     """
     Compute geometry metrics for a set of molecules using a specified function.
 
@@ -79,7 +79,7 @@ def collect_geometry(mols, compute_function, preserve_aromatic=True):
     results = []
 
     for mol in mols:
-        if is_valid(mol):
+        if is_valid(mol, allow_fragments=allow_fragments):
             mol = Chem.Mol(mol)
             Chem.SanitizeMol(mol)
             if not preserve_aromatic:
@@ -147,7 +147,7 @@ def wasserstein(data, result, support="joint", bins=1000):
 
 
 def compute_distance(rdkit_molecules, dataset_values, agg_idx, compute_function, support="joint",
-        bins=1000, preserve_aromatic=True):
+        bins=1000, preserve_aromatic=True, allow_fragments=False):
     """
     Compute the weighted Wasserstein distance between molecule geometries.
 
@@ -163,7 +163,8 @@ def compute_distance(rdkit_molecules, dataset_values, agg_idx, compute_function,
     Returns:
         float: Weighted Wasserstein distance.
     """
-    result_dict = collect_geometry(rdkit_molecules, compute_function, preserve_aromatic=preserve_aromatic)
+    result_dict = collect_geometry(rdkit_molecules, compute_function, preserve_aromatic=preserve_aromatic,
+                                   allow_fragments=allow_fragments)
     agg_dataset = aggregate_dict(dataset_values, agg_idx)
     agg_res = aggregate_dict(result_dict, agg_idx)
 
@@ -184,13 +185,15 @@ class Molecule3DMetrics:
     Class to compute 3D metrics for molecules, including bond lengths, angles, and optionally dihedrals.
     """
 
-    def __init__(self, dataset_info, device="cpu", test=False, preserve_aromatic=False):
+    def __init__(self, dataset_info, device="cpu", test=False, preserve_aromatic=False,
+                 allow_fragments=False):
         self.bond_lengths_w1 = MeanMetric().to(device)
         self.angles_w1 = MeanMetric().to(device)    
         self.dihedrals_w1 = MeanMetric().to(device)
         self.statistics = dataset_info["statistics"]
         self.test = test
         self.preserve_aromatic = preserve_aromatic
+        self.allow_fragments = allow_fragments
 
 
     def reset(self):
@@ -214,11 +217,14 @@ class Molecule3DMetrics:
         if stats is None:
             return {}
         bond_lengths = compute_distance(molecules, stats.bond_lengths, 1, compute_bond_lengths,
-                                        support="joint", preserve_aromatic=self.preserve_aromatic)
+                                        support="joint", preserve_aromatic=self.preserve_aromatic,
+                                        allow_fragments=self.allow_fragments)
         bond_angles = compute_distance(molecules, stats.bond_angles, 2, compute_bond_angles,
-                                       support=(0, 360), bins=360, preserve_aromatic=self.preserve_aromatic)
+                                       support=(0, 360), bins=360, preserve_aromatic=self.preserve_aromatic,
+                                       allow_fragments=self.allow_fragments)
         torsions = compute_distance(molecules, stats.dihedrals, 3, compute_torsion_angles,
-                                    support=(0, 360), bins=360, preserve_aromatic=self.preserve_aromatic)
+                                    support=(0, 360), bins=360, preserve_aromatic=self.preserve_aromatic,
+                                    allow_fragments=self.allow_fragments)
 
         self.bond_lengths_w1(bond_lengths)
         self.angles_w1(bond_angles)

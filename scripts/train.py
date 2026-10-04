@@ -170,7 +170,8 @@ def main(cfg: DictConfig) -> None:
             compute_energy_metrics=cfg.evaluation.compute_energy_metrics,
             energy_metrics_args=energy_metrics_args,
             scale_coords=cfg.evaluation.scale_coords,
-            compute_stereo_metrics=cfg.evaluation.compute_stereo_metrics
+            compute_stereo_metrics=cfg.evaluation.compute_stereo_metrics,
+            allow_fragments=OmegaConf.select(cfg.evaluation, "allow_fragments", default=False)
         )
     else: 
         raise NotImplementedError
