@@ -6,17 +6,12 @@ This is a fork of sample_conformers_processed.py that skips sampling entirely: i
 generating conformers with a checkpoint, it loads already-generated molecules from --target
 and pairs them with --reference, then runs the same ConformerEvaluationCallback used there.
 
-Molecules are paired, in order of preference:
-  1. by the --id_prop SD property (default "chemblid"), if every molecule in both files has it
-     and it is unique among the references;
-  2. by the RDKit "_Name" property, if every molecule in both files has one and it is unique
-     among the references;
-  3. by position, if the target holds k replicas of each reference in order (k = --n_confs, as
-     written by sample_conformers_processed.py without shuffling). If "_Name" is set on both
-     sides, every pair's names must agree.
-Name pairing is skipped when reference names repeat, which happens for n-mers: both
-sample_conformers_processed.py and convert_data_to_sdf.py set "_Name" to the SMILES, and
-distinct dimers of the same compound share one.
+Molecules are paired by title if the reference titles are unique and every target title is
+among them; otherwise by position, the target holding k replicas of each reference in order
+(k = --n_confs, as written by sample_conformers_processed.py without shuffling), with every
+pair's SMILES required to agree (the SMILES field written by convert_data_to_sdf.py, else the
+title, which sample_conformers_processed.py sets to the SMILES). SMILES can't pair n-mers by
+itself: distinct dimers of the same compound share one.
 
 Multi-fragment molecules (dimers, n-mers) are only evaluated when allow_fragments is on; it
 comes from --allow_fragments, else evaluation.allow_fragments in --config, else is turned on
@@ -54,22 +49,13 @@ def load_sdf_molecules(path):
     return mols
 
 
-def pair_by_property(target_mols, reference_mols, prop):
-    """Pair target/reference molecules by a property that is unique among the references."""
-    reference_by_key = {m.GetProp(prop): m for m in reference_mols}
-    paired_target, paired_reference, missing = [], [], []
-    for m in target_mols:
-        key = m.GetProp(prop)
-        ref = reference_by_key.get(key)
-        if ref is None:
-            missing.append(key)
-            continue
-        paired_target.append(m)
-        paired_reference.append(ref)
-    if missing:
-        print(f"WARNING: {len(missing)} target molecules had no matching reference by '{prop}' "
-              f"(e.g. {missing[:5]}), dropped.")
-    return paired_target, paired_reference
+def smiles_key(mol):
+    """A molecule's SMILES: its SMILES field (convert_data_to_sdf.py), else its title
+    (sample_conformers_processed.py titles generated molecules by SMILES)."""
+    for prop in ("SMILES", "_Name"):
+        if mol.HasProp(prop):
+            return mol.GetProp(prop)
+    return None
 
 
 def pair_by_position(target_mols, reference_mols, n_confs):
@@ -86,32 +72,32 @@ def pair_by_position(target_mols, reference_mols, n_confs):
             f"{len(reference_mols)} references; cannot pair by position.")
 
     paired_reference = [reference_mols[i // n_confs] for i in range(len(target_mols))]
-    if all(m.HasProp("_Name") for m in target_mols + reference_mols):
+    if all(smiles_key(m) is not None for m in target_mols + reference_mols):
         mismatched = [i for i, (t, r) in enumerate(zip(target_mols, paired_reference))
-                      if t.GetProp("_Name") != r.GetProp("_Name")]
+                      if smiles_key(t) != smiles_key(r)]
         if mismatched:
             raise ValueError(
                 f"Positional pairing with {n_confs} conformer(s) per reference gives {len(mismatched)} "
-                f"pairs whose '_Name' differs (first at target index {mismatched[0]}); the target "
+                f"pairs whose SMILES differ (first at target index {mismatched[0]}); the target "
                 "order does not match the reference (e.g. it was sampled with --shuffle or "
-                "--atom_aware_batching). Write a unique --id_prop into both files instead.")
+                "--atom_aware_batching).")
     else:
-        print("WARNING: pairing by position without '_Name' to verify the pairs.")
+        print("WARNING: pairing by position without SMILES to verify the pairs.")
     print(f"Paired by position: {n_confs} target conformer(s) per reference molecule.")
     return list(target_mols), paired_reference
 
 
-def pair_molecules(target_mols, reference_mols, id_prop="chemblid", n_confs=None):
-    """Pair target/reference molecules by a unique property if possible, else by position."""
-    for prop in (id_prop, "_Name"):
-        if not prop or not all(m.HasProp(prop) for m in target_mols + reference_mols):
-            continue
-        n_unique = len({m.GetProp(prop) for m in reference_mols})
-        if n_unique == len(reference_mols):
-            print(f"Pairing target/reference molecules by '{prop}'.")
-            return pair_by_property(target_mols, reference_mols, prop)
-        print(f"'{prop}' is not unique in --reference ({len(reference_mols) - n_unique} repeats, "
-              "e.g. n-mers of the same compound sharing a SMILES); not pairing by it.")
+def pair_molecules(target_mols, reference_mols, n_confs=None):
+    """
+    Pair by title if the reference titles are unique and every target title is one of them
+    (e.g. both files titled by dataset id); otherwise by position, verified by SMILES.
+    """
+    if all(m.HasProp("_Name") for m in target_mols + reference_mols):
+        reference_by_name = {m.GetProp("_Name"): m for m in reference_mols}
+        if (len(reference_by_name) == len(reference_mols)
+                and all(m.GetProp("_Name") in reference_by_name for m in target_mols)):
+            print("Pairing target/reference molecules by title.")
+            return list(target_mols), [reference_by_name[m.GetProp("_Name")] for m in target_mols]
     return pair_by_position(target_mols, reference_mols, n_confs)
 
 
@@ -155,8 +141,6 @@ def main():
                          help="Optional path to save a per-molecule optimization log (.csv) with "
                               "smiles, reference/pre/post-optimization energy, whether topology "
                               "was preserved, and R/S and E/Z stereocenter correctness counts.")
-    parser.add_argument("--id_prop", type=str, default="chemblid",
-                        help="SD property holding a unique molecule ID to pair target/reference by.")
     parser.add_argument("--n_confs", type=int, default=None,
                         help="Conformers per reference in --target, for pairing by position "
                              "(default: inferred from the file sizes).")
@@ -169,7 +153,7 @@ def main():
                              "evaluation.energy_metrics_args.opt_metrics in --config.")
     parser.add_argument("--opt_type", choices=["full", "constrained"], default=None,
                         help="Full optimization, or the references' constrained relaxation "
-                             "(contacts looked up by the reference's 'chemblid' property, which "
+                             "(contacts looked up by the reference's title, the dataset id that "
                              "convert_data_to_sdf.py writes). Default: "
                              "evaluation.energy_metrics_args.opt_type in --config, else full.")
     args = parser.parse_args()
@@ -184,8 +168,7 @@ def main():
     if not reference_mols:
         raise ValueError(f"No valid molecules found in --reference: {args.reference}")
 
-    generated, references = pair_molecules(target_mols, reference_mols,
-                                           id_prop=args.id_prop, n_confs=args.n_confs)
+    generated, references = pair_molecules(target_mols, reference_mols, n_confs=args.n_confs)
     generated, references = check_atoms_match(generated, references)
     allow_fragments = resolve_allow_fragments(args.allow_fragments, cfg, references)
     print(f"allow_fragments: {allow_fragments}")

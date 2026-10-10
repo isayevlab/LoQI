@@ -1,7 +1,7 @@
 """
 Load a processed-dataset split directly via MoleculeDataset (the same way
-sample_conformers_processed.py does) and dump it to an SDF file, using each molecule's SMILES
-string as its name ("_Name" property).
+sample_conformers_processed.py does) and dump it to an SDF file, with each molecule's dataset id
+(e.g. the CSD id "HIVTUD_dimer_6") as its title ("_Name") and its SMILES in a SMILES field.
 
 Example:
     python scripts/convert_data_to_sdf.py \
@@ -57,9 +57,9 @@ def main():
     for idx in tqdm(subset_indices, desc="Writing"):
         data = dataset[idx]
         mol = Chem.Mol(data.mol)
-        mol.SetProp("_Name", data.smiles)
-        if hasattr(data, "chemblid"):
-            mol.SetProp("chemblid", str(data.chemblid))  # unique id, also keys the contacts file
+        # The id (stored as `chemblid` by data_processing) also keys the contacts file
+        mol.SetProp("_Name", str(data.chemblid) if hasattr(data, "chemblid") else data.smiles)
+        mol.SetProp("SMILES", data.smiles)
         writer.write(mol)
         n_written += 1
     writer.close()

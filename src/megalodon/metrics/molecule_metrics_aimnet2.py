@@ -306,7 +306,8 @@ class MoleculeAIMNet2Metrics:
             logs its metrics with a "copt_" instead of "opt_" prefix.
         constrained_opt_params: keyword arguments of constrained_relax, plus "contacts_file"
             (JSON from scripts/extract_contacts.py) and "id_prop" (molecule property holding the
-            contacts key, default "chemblid", read from the reference molecule if given).
+            contacts key, default "chemblid", falling back to the title; read from the reference
+            molecule if given).
         """
         if opt_type not in ("full", "constrained"):
             raise ValueError(f"opt_type must be 'full' or 'constrained', got {opt_type!r}")
@@ -464,7 +465,9 @@ class MoleculeAIMNet2Metrics:
 
         for idx, mol in enumerate(tqdm(opt_molecules, desc="Constrained optimization")):
             id_source = reference_molecules[idx] if reference_molecules is not None else mol
-            key = id_source.GetProp(self.contacts_id_prop) if id_source.HasProp(self.contacts_id_prop) else None
+            # The id property if set (validation tags it), else the title (convert_data_to_sdf.py)
+            key = next((id_source.GetProp(prop) for prop in (self.contacts_id_prop, "_Name")
+                        if id_source.HasProp(prop)), None)
             contact_pairs = self.contacts.get(key, [])
             if not contact_pairs and len(Chem.GetMolFrags(mol)) > 1:
                 n_no_contacts += 1
