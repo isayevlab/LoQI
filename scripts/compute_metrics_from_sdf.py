@@ -167,6 +167,11 @@ def main():
     parser.add_argument("--opt", action=BooleanOptionalAction, default=None,
                         help="Run AIMNet2 optimization and the opt_* metrics. Default: "
                              "evaluation.energy_metrics_args.opt_metrics in --config.")
+    parser.add_argument("--opt_type", choices=["full", "constrained"], default=None,
+                        help="Full optimization, or the references' constrained relaxation "
+                             "(contacts looked up by the reference's 'chemblid' property, which "
+                             "convert_data_to_sdf.py writes). Default: "
+                             "evaluation.energy_metrics_args.opt_type in --config, else full.")
     args = parser.parse_args()
 
     cfg = OmegaConf.load(args.config)
@@ -196,7 +201,10 @@ def main():
     energy_metrics_args = OmegaConf.to_container(cfg.evaluation.energy_metrics_args, resolve=True)
     if args.opt is not None:
         energy_metrics_args["opt_metrics"] = args.opt
-    print(f"optimization: {energy_metrics_args['opt_metrics']}")
+    if args.opt_type is not None:
+        energy_metrics_args["opt_type"] = args.opt_type
+    print(f"optimization: {energy_metrics_args['opt_metrics']} "
+          f"({energy_metrics_args.get('opt_type', 'full')})")
 
     processed_stats_dir = f"{cfg.data.dataset_root}/processed"
     stats = Statistics.load_statistics(processed_stats_dir, "train")

@@ -8,8 +8,10 @@ import torch
 from rdkit import Chem
 from torch import Tensor
 from torch import nn
+from tqdm import tqdm
 
 from megalodon.metrics.aimnet2.check_topology import check_topology
+from megalodon.metrics.aimnet2.constrained_opt import constrained_relax, load_contacts
 from megalodon.metrics.aimnet2.dsopt import group_opt
 from megalodon.metrics.aimnet2.pair_geometry import (
     compute_bond_lengths_diff,
@@ -296,7 +298,18 @@ class MoleculeAIMNet2Metrics:
     """
 
     def __init__(self, model_path, batchsize, opt_metrics=False, device="cpu", opt_params=None,
-                 chunked=False, allow_fragments=False):
+                 chunked=False, allow_fragments=False, opt_type="full", constrained_opt_params=None):
+        """
+        opt_type: "full" optimizes to a minimum with group_opt (opt_params); "constrained" runs
+            the short dihedral- and contact-constrained relaxation used to prepare the
+            references (constrained_opt.constrained_relax, with constrained_opt_params), and
+            logs its metrics with a "copt_" instead of "opt_" prefix.
+        constrained_opt_params: keyword arguments of constrained_relax, plus "contacts_file"
+            (JSON from scripts/extract_contacts.py) and "id_prop" (molecule property holding the
+            contacts key, default "chemblid", read from the reference molecule if given).
+        """
+        if opt_type not in ("full", "constrained"):
+            raise ValueError(f"opt_type must be 'full' or 'constrained', got {opt_type!r}")
         self.model = Forces(load_aimnet2_module(model_path, device=device)).to(device).eval()
         self.opt_metrics = opt_metrics
         self.opt_params = opt_params or {}
@@ -304,6 +317,12 @@ class MoleculeAIMNet2Metrics:
         self.batchsize = batchsize
         self.chunked = chunked
         self.allow_fragments = allow_fragments  # e.g. dimers: keep multi-fragment molecules
+        self.opt_type = opt_type
+        self.opt_prefix = "copt_" if opt_type == "constrained" else "opt_"
+        self.constrained_opt_params = dict(constrained_opt_params or {})
+        contacts_file = self.constrained_opt_params.pop("contacts_file", None)
+        self.contacts_id_prop = self.constrained_opt_params.pop("id_prop", "chemblid")
+        self.contacts = load_contacts(contacts_file) if contacts_file else {}
 
     @torch.no_grad()
     def __call__(self, molecules, reference_molecules=None, return_molecules=False,
@@ -370,10 +389,11 @@ class MoleculeAIMNet2Metrics:
         if self.opt_metrics:
             start_time = time.time()
             valid_molecules, opt_molecules, res_energy, topology_mask = self.compute_optimized_metrics(
-                aimnet2_chunks, aimnet2_idxs, valid_molecules, energy, metrics, ref_energy=ref_energy)
+                aimnet2_chunks, aimnet2_idxs, valid_molecules, energy, metrics, ref_energy=ref_energy,
+                reference_molecules=reference_molecules)
 
             end_time = time.time()  # End timing
-            metrics["opt_total_time"] = end_time - start_time
+            metrics[f"{self.opt_prefix}total_time"] = end_time - start_time
 
         if return_details:
             valid_orig_indices = [i for i, v in enumerate(valid) if v]
@@ -430,8 +450,45 @@ class MoleculeAIMNet2Metrics:
 
         return torch.cat(total_energy), torch.cat(total_forces)
 
+    def constrained_optimize(self, molecules, reference_molecules=None):
+        """
+        Run constrained_relax on each molecule, freezing the contacts stored under the
+        molecule's id (taken from its reference molecule if given). Returns (optimized
+        molecules, energy [eV], converged flags, step counts), aligned with `molecules`.
+        """
+        opt_molecules = deepcopy(molecules)
+        opt_energy = torch.zeros(len(molecules), device=self.device, dtype=torch.double)
+        opt_converged = torch.zeros(len(molecules), device=self.device, dtype=torch.long)
+        opt_n_steps = torch.zeros(len(molecules), device=self.device, dtype=torch.long)
+        n_no_contacts = n_failed = 0
+
+        for idx, mol in enumerate(tqdm(opt_molecules, desc="Constrained optimization")):
+            id_source = reference_molecules[idx] if reference_molecules is not None else mol
+            key = id_source.GetProp(self.contacts_id_prop) if id_source.HasProp(self.contacts_id_prop) else None
+            contact_pairs = self.contacts.get(key, [])
+            if not contact_pairs and len(Chem.GetMolFrags(mol)) > 1:
+                n_no_contacts += 1
+            positions, energy, converged, n_steps, failure = constrained_relax(
+                mol, self.model, contact_pairs, device=self.device, **self.constrained_opt_params)
+            if failure is not None:
+                n_failed += 1
+            conformer = mol.GetConformer()
+            for i, pos in enumerate(positions):
+                conformer.SetAtomPosition(i, pos.tolist())
+            opt_energy[idx] = energy
+            opt_converged[idx] = int(converged)
+            opt_n_steps[idx] = n_steps
+
+        if n_no_contacts:
+            print(f"WARNING: {n_no_contacts} multi-fragment molecules had no contacts in the "
+                  f"contacts file (by '{self.contacts_id_prop}'); no contact atoms were frozen.")
+        if n_failed:
+            print(f"WARNING: constrained optimization failed for {n_failed}/{len(molecules)} "
+                  "molecules (constraint solver or NaN); their starting geometry was kept.")
+        return opt_molecules, opt_energy, opt_converged, opt_n_steps
+
     def compute_optimized_metrics(self, aimnet2_chunk, aimnet2_idxs, valid_molecules, energy, metrics,
-                                  ref_energy=None):
+                                  ref_energy=None, reference_molecules=None):
         """
         Compute metrics for optimized geometries.
 
@@ -440,7 +497,15 @@ class MoleculeAIMNet2Metrics:
             valid_molecules (list): List of valid RDKit molecules.
             energy (torch.Tensor): Initial energy values.
             metrics (dict): Dictionary to store metrics.
+            reference_molecules (list): References aligned with valid_molecules, used by the
+                constrained optimization to look up each molecule's contacts.
         """
+        if self.opt_type == "constrained":
+            opt_molecules, opt_energy, opt_converged, opt_n_steps = self.constrained_optimize(
+                valid_molecules, reference_molecules)
+            return self._optimized_metrics(valid_molecules, opt_molecules, opt_energy, opt_converged,
+                                           opt_n_steps, energy, metrics, ref_energy)
+
         opt_molecules = deepcopy(valid_molecules)
         opt_energy = torch.zeros_like(energy)
         opt_converged = torch.zeros_like(energy, dtype=torch.long)
@@ -470,6 +535,13 @@ class MoleculeAIMNet2Metrics:
             opt_energy[idxs] = res_energy
             opt_n_steps[idxs] = n_steps
 
+        return self._optimized_metrics(valid_molecules, opt_molecules, opt_energy, opt_converged,
+                                       opt_n_steps, energy, metrics, ref_energy)
+
+    def _optimized_metrics(self, valid_molecules, opt_molecules, opt_energy, opt_converged,
+                           opt_n_steps, energy, metrics, ref_energy=None):
+        """Fill `metrics` with the opt_* (or copt_*) metrics of the optimized geometries."""
+        p = self.opt_prefix
         pairs = list(zip(valid_molecules, opt_molecules))
         ev2kcalpermol = 23.060547830619026
         bond_diff = compute_distance(pairs, 1, compute_bond_lengths_diff, self.allow_fragments)
@@ -480,29 +552,30 @@ class MoleculeAIMNet2Metrics:
                                      dtype=torch.bool)
         energy_drop = (energy - opt_energy)[topology_mask] * ev2kcalpermol
         metrics.update({
-            "opt_converged": opt_converged.float().mean().item(),
+            f"{p}converged": opt_converged.float().mean().item(),
             # opt_converged stores 0/1 flags, not positional indices.
             # Using the last local `converged` tensor here can trigger out-of-bounds
             # indexing for single-molecule cases (e.g., value 1 with size 1).
-            "opt_steps": (
+            f"{p}steps": (
                 opt_n_steps[opt_converged.bool()].float().mean().item()
                 if opt_converged.bool().any()
                 else 0.0
             ),
-            "preserved_topology": topology_mask.float().mean().item(),
-            "opt_avg_energy_drop": energy_drop.mean().item(),
-            "opt_median_energy_drop": torch.median(energy_drop).item(),
-            "opt_bond_lengths_diff": bond_diff,
-            "opt_bond_angles_diff": angle_diff,
-            "opt_dihedrals_diff": torsion_diff,
+            ("preserved_topology" if p == "opt_" else f"{p}preserved_topology"):
+                topology_mask.float().mean().item(),
+            f"{p}avg_energy_drop": energy_drop.mean().item(),
+            f"{p}median_energy_drop": torch.median(energy_drop).item(),
+            f"{p}bond_lengths_diff": bond_diff,
+            f"{p}bond_angles_diff": angle_diff,
+            f"{p}dihedrals_diff": torsion_diff,
         })
 
         if ref_energy is not None:
-            metrics["opt_median_relative_energy"] = torch.median(
+            metrics[f"{p}median_relative_energy"] = torch.median(
                 (opt_energy - ref_energy)[topology_mask]*ev2kcalpermol).item()
-            
-            metrics["opt_min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / max(len(valid_molecules), 1)
-            metrics["opt_better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / max(len(valid_molecules), 1)
+
+            metrics[f"{p}min_conformers"] = ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < 0.1).sum().item() / max(len(valid_molecules), 1)
+            metrics[f"{p}better_min_conformers"] =  ((opt_energy - ref_energy)[topology_mask]*ev2kcalpermol < -0.1).sum().item() / max(len(valid_molecules), 1)
         return valid_molecules, opt_molecules, opt_energy, topology_mask
 
     @staticmethod

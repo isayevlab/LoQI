@@ -177,7 +177,9 @@ class ConformerEvaluationCallback(pl.Callback):
                 opt_metrics=self.energy_metrics_args["opt_metrics"],
                 opt_params=self.energy_metrics_args["opt_params"],
                 device=device,
-                allow_fragments=self.allow_fragments)
+                allow_fragments=self.allow_fragments,
+                opt_type=self.energy_metrics_args.get("opt_type", "full"),
+                constrained_opt_params=self.energy_metrics_args.get("constrained_opt_params"))
             energy_out = energy_metrics(
                 molecules, reference_molecules=reference_molecules,
                 return_molecules=return_optimized_molecules,
@@ -255,6 +257,12 @@ class ConformerEvaluationCallback(pl.Callback):
     def on_validation_batch_end(self, trainer, pl_module, outputs, batch, batch_idx,
             dataloader_idx=0):
         if len(self.molecules) < self.max_molecules:
+            # Tag each reference with its dataset id, used to look up its contacts for the
+            # constrained optimization; generated molecules are copies, so they inherit it
+            chemblids = getattr(batch, "chemblid", None)
+            if chemblids is not None:
+                for mol, chemblid in zip(batch["mol"], chemblids):
+                    mol.SetProp("chemblid", str(chemblid))
             batch.pos = None
             out = pl_module.sample(batch=batch, timesteps=self.timesteps, pre_format=False)
             out["x"] = self.scale_coords * out["x"]

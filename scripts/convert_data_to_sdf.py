@@ -58,6 +58,8 @@ def main():
         data = dataset[idx]
         mol = Chem.Mol(data.mol)
         mol.SetProp("_Name", data.smiles)
+        if hasattr(data, "chemblid"):
+            mol.SetProp("chemblid", str(data.chemblid))  # unique id, also keys the contacts file
         writer.write(mol)
         n_written += 1
     writer.close()

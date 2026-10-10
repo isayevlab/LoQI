@@ -103,7 +103,7 @@ train:
   gradient_clip_value: 1.0
   log_freq: 10
   val_freq: 2
-  checkpoint_monitor: opt_median_relative_energy
+  checkpoint_monitor: copt_median_relative_energy
   checkpoint_monitor_mode: min
   checkpoint_every_n_train_steps: 100
 
@@ -120,9 +120,17 @@ evaluation:
     model_path: src/megalodon/metrics/aimnet2/cpcm_model/wb97m_cpcms_v2_0.jpt
     batchsize: 8
     opt_metrics: True
+    # full: optimize to a minimum (opt_params), metrics logged as opt_*
+    # constrained: the references' dihedral- and contact-constrained relaxation
+    #   (constrained_opt_params), metrics logged as copt_*
+    opt_type: constrained
     opt_params:
       fmax: 2e-3
       max_nstep: 3000
+    constrained_opt_params:
+      contacts_file: "${data.dataset_root}/contacts.json"  # from scripts/extract_contacts.py
+      steps: 20
+      fmax: 0.05
 
 optimizer:
   type: adamw
